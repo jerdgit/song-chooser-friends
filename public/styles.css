@@ -251,3 +251,55 @@ input[type=text]:focus, select:focus { border-color: var(--accent2); }
 .fade-in { animation: fade .25s ease; }
 @keyframes fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .sticky-submit .btn:disabled { opacity: 1; background: var(--card2); color: var(--muted); box-shadow: 0 10px 24px -8px rgba(0, 0, 0, .8); }
+
+/* after voting: the year's Billboard top 10 */
+.chart-row { opacity: 0; animation: chartIn .35s ease forwards; }
+@keyframes chartIn { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: none; } }
+.chart-row .gr { color: var(--text); }
+.chart-row.mine { background: var(--card2); }
+.chart-row.mine.p0 { box-shadow: inset 0 0 0 2px var(--gold); }
+.chart-row.mine.p1 { box-shadow: inset 0 0 0 2px var(--silver); }
+.chart-row.mine.p2 { box-shadow: inset 0 0 0 2px var(--bronze); }
+.your-pick { text-align: center; font-size: 1.3rem; min-width: 44px; }
+.your-pick span { display: block; font-size: .65rem; color: var(--muted); white-space: nowrap; }
+.next-bar { position: sticky; top: 62px; z-index: 6; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; box-shadow: 0 12px 30px -10px rgba(0, 0, 0, .9); }
+.next-bar .nb-text { flex: 1; min-width: 0; font-size: .95rem; }
+.next-bar .btn { padding: 10px 16px; flex: none; }
+.next-bar .progress { margin-top: 8px; height: 4px; }
+.next-bar .progress i { transition: width .1s linear; }
+@media (prefers-reduced-motion: reduce) { .chart-row { animation: none; opacity: 1; } }
+/* compact so all 10 fit on a phone screen */
+.chart-row { grid-template-columns: 24px 38px minmax(0, 1fr) auto; gap: 10px; padding: 6px 10px; border-radius: 10px; }
+.chart-row .thumb-wrap, .chart-row .thumb { width: 38px; height: 38px; }
+.chart-row .thumb-wrap .mini-play { top: 6px; right: 6px; width: 26px; height: 26px; font-size: .6rem; }
+.chart-row .gr { font-size: 1rem; }
+.chart-row .t, .chart-row .a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chart-row .t { font-size: .9rem; }
+.chart-row .a { font-size: .78rem; }
+.chart-row .your-pick { font-size: 1.05rem; min-width: 40px; }
+.chart-list { gap: 5px; }
+
+.reveal-head { align-items: baseline; }
+.reveal-head .year-title { font-size: 2.4rem; }
+.callout.compact { padding: 10px 14px; font-size: .92rem; }
+.chart-row { padding: 5px 10px; }
+.chart-row .thumb-wrap, .chart-row .thumb { width: 34px; height: 34px; }
+.chart-row .thumb-wrap .mini-play { top: 4px; right: 4px; }
+.chart-row .your-pick span { display: none; }
+
+.chart-row { grid-template-columns: 22px 30px minmax(0, 1fr) auto; padding: 4px 10px; min-height: 40px; }
+.chart-row .thumb-wrap, .chart-row .thumb { width: 30px; height: 30px; border-radius: 6px; }
+.chart-row .thumb-wrap .mini-play { top: 3px; right: 3px; width: 24px; height: 24px; font-size: .55rem; }
+.chart-row .ln { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .9rem; }
+.chart-row .ln .t { font-weight: 700; }
+.chart-row .ln .a { color: var(--muted); font-size: .8rem; margin-left: 4px; }
+.chart-row .your-pick { min-width: 28px; font-size: 1rem; }
+
+.reveal-head .year-title { font-size: 1.9rem; }
+.chart-card { padding: 14px; }
+.match-yes { color: var(--good); font-weight: 700; }
+.chart-row { min-height: 36px; padding: 3px 10px; }
+.chart-row .thumb-wrap, .chart-row .thumb { width: 28px; height: 28px; }
+.chart-row .thumb-wrap .mini-play { top: 2px; right: 2px; }
+.chart-list { gap: 4px; }
+.reveal-stack > * + * { margin-top: 10px; }

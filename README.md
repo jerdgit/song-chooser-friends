@@ -20,8 +20,9 @@ next to the real Billboard ranking.
 3. **Play each year.** Everything happens on one screen. The 10 songs appear one at a time, in a shuffled order so
    the chart position isn't given away. Each song's preview plays, and when it ends the next song appears and
    starts. Tap **Next ›** to skip ahead, or **Show all songs** to reveal the rest. Tap any song to pick it (first
-   tap = 1st place) at any point, even mid-song. Afterwards you see where your picks landed on Billboard's chart
-   and what the group has voted so far.
+   tap = 1st place) at any point, even mid-song. Once you lock in, that year's Billboard top 10 counts down from
+   #10 to #1 with your picks highlighted, and after 10 seconds you move on to the next year automatically (tap
+   **Stay** to keep looking, or **Go now** to skip ahead). The group's standings for that year are further down.
 4. **Check the results** at any time (they update live):
    - **Years:** the group's #1 for every year, and whether it matched Billboard's #1. Tap a year to see all
      10 songs with points, who voted for what, and the Billboard rank (sortable either way).

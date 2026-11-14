@@ -5,6 +5,7 @@ const $app = document.getElementById('app');
 const $nav = document.getElementById('topnav');
 const PLACE = ['1st', '2nd', '3rd'];
 const MEDAL = ['🥇', '🥈', '🥉'];
+const REVEAL_SECONDS = 10; // how long the Billboard chart shows after you vote, before moving on
 
 let SONGS = null;       // { year: [{rank,title,artist,preview,art,link}] }
 let YEARS = [];
@@ -480,26 +481,37 @@ async function renderPlay(code, year) {
 
     if (st.step === 'reveal') {
       const res = Scoring.yearResults(game, SONGS, year);
-      const bb = res.billboardNo1;
       const myVotes = game.votes[me.playerId] || {};
       const next = game.years.slice(yi + 1).find(y => !myVotes[y]) || game.years.find(y => !myVotes[y]);
+      const nextUrl = next ? `#/g/${code}/play/${next}` : `#/g/${code}/results`;
       const hit = st.picks[0] === 1;
       const top = res.rows.filter(r => r.points > 0).slice(0, 3);
+      const chart = SONGS[year].slice().sort((x, y) => x.rank - y.rank);
       $app.innerHTML = `
-        <div class="stack fade-in">
-          <div class="center"><div class="year-title" style="font-size:3.2rem">${year}</div><p class="muted">Picks saved ✓</p></div>
-          <div class="callout ${hit ? 'win' : ''}">
-            ${hit ? `<b>🎯 Chart match!</b> Your #1 was also Billboard's #1 song of ${year}.`
-                  : `<b>Billboard's #1 of ${year}:</b> ${esc(bb.title)} by ${esc(bb.artist)}`}
-          </div>
-          <div class="card stack">
-            <h3>Where your picks landed on the Billboard year-end chart</h3>
-            <div class="list">${st.picks.map((r, i) => { const s = songOf(year, r); return `
-              <div class="srow"><div class="gr">${MEDAL[i]}</div>
-                <div class="thumb-wrap">${art(s, 'thumb')}${miniPlay(year, r)}</div>
-                <div style="min-width:0"><div class="t">${esc(s.title)}</div><div class="a">${esc(s.artist)}</div></div>
-                <span class="bb ${r === 1 ? 'one' : ''}">Billboard #${r}</span></div>`; }).join('')}
+        <div class="stack reveal-stack fade-in">
+          <div class="row spread reveal-head"><div class="year-title">${year}</div><span class="muted">Picks saved ✓</span></div>
+          <div class="next-bar">
+            <div class="row" style="flex-wrap:nowrap">
+              <div class="nb-text" id="nbtext">${next ? `Next: <b>${next}</b> in <span id="secs">${REVEAL_SECONDS}</span>s` : 'That was your last year!'}</div>
+              ${next ? '<button class="btn ghost" id="stay">Stay</button>' : ''}
+              <a class="btn primary" href="${nextUrl}">${next ? 'Go now →' : 'See results →'}</a>
             </div>
+            ${next ? '<div class="progress"><i id="nbprog" style="width:100%"></i></div>' : ''}
+          </div>
+          <div class="card chart-card">
+            <h3 style="margin:0">Billboard's top 10 of ${year}</h3>
+            <p class="small ${hit ? 'match-yes' : 'muted'}" style="margin:2px 0 10px">${hit
+              ? `🎯 Chart match! Your #1 was Billboard's #1 too.`
+              : `Your #1 was Billboard's #${st.picks[0]}.`}</p>
+            <div class="list chart-list">${chart.map(s => {
+              const place = st.picks.indexOf(s.rank);
+              return `<div class="srow chart-row ${place >= 0 ? 'mine p' + place : ''}" style="animation-delay:${(chart.length - s.rank) * 120}ms">
+                <div class="gr">${s.rank}</div>
+                <div class="thumb-wrap">${art(s, 'thumb')}${miniPlay(year, s.rank)}</div>
+                <div class="ln"><span class="t">${esc(s.title)}</span> <span class="a">${esc(s.artist)}</span></div>
+                <div class="your-pick">${place >= 0 ? `${MEDAL[place]}<span>Your ${PLACE[place]}</span>` : ''}</div>
+              </div>`;
+            }).join('')}</div>
           </div>
           <div class="card stack">
             <div class="row spread"><h3 style="margin:0">The group so far</h3><span class="small muted">${res.voterCount} voter${res.voterCount === 1 ? '' : 's'}</span></div>
@@ -511,11 +523,28 @@ async function renderPlay(code, year) {
             </div>
             <a class="linkbtn small" href="#/g/${code}/results/${year}">Full ${year} results →</a>
           </div>
-          ${next ? `<a class="btn primary big block" href="#/g/${code}/play/${next}">On to ${next} →</a>`
-                 : `<a class="btn primary big block" href="#/g/${code}/results">All done! See the results →</a>`}
           <a class="btn ghost block" href="#/g/${code}">Back to lobby</a>
         </div>`;
       Player.paint();
+      if (!next) return;
+      // Count down, then move on to the next year. Paused while the tab is hidden,
+      // and stopped for good if they tap Stay or play one of the songs.
+      let left = REVEAL_SECONDS * 1000;
+      const stop = () => {
+        clearInterval(st.timer); st.timer = null;
+        const t = document.getElementById('nbtext'); if (t) t.innerHTML = `Next: <b>${next}</b>, whenever you're ready`;
+        document.getElementById('stay')?.remove();
+        document.querySelector('.next-bar .progress')?.remove();
+      };
+      st.timer = setInterval(() => {
+        if (document.hidden) return;
+        left -= 100;
+        const secs = document.getElementById('secs'); if (secs) secs.textContent = Math.max(0, Math.ceil(left / 1000));
+        const bar = document.getElementById('nbprog'); if (bar) bar.style.width = Math.max(0, left / (REVEAL_SECONDS * 10)) + '%';
+        if (left <= 0) { clearInterval(st.timer); st.timer = null; location.hash = nextUrl; }
+      }, 100);
+      document.getElementById('stay').onclick = stop;
+      $app.firstElementChild.addEventListener('click', e => { if (e.target.closest('[data-play]') && st.timer) stop(); });
     }
   }
 
@@ -525,7 +554,7 @@ async function renderPlay(code, year) {
     if (e.key === ' ' && !e.target.closest('[data-pick]')) { e.preventDefault(); Player.toggle(year, current()); }
   };
   document.addEventListener('keydown', onKey);
-  cleanup = () => { document.removeEventListener('keydown', onKey); Player.onEnded = null; Player.stop(); };
+  cleanup = () => { document.removeEventListener('keydown', onKey); clearInterval(st.timer); Player.onEnded = null; Player.stop(); };
   draw();
 }
 
