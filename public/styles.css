@@ -133,20 +133,19 @@ input[type=text]:focus, select:focus { border-color: var(--accent2); }
 .slot.p1.filled { border-color: var(--gold); }
 .slot.p2.filled { border-color: var(--silver); }
 .slot.p3.filled { border-color: var(--bronze); }
-.tiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-@media (min-width: 620px) { .tiles { grid-template-columns: repeat(3, 1fr); } }
+.tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }  /* 10 songs = 2 rows of 5 */
 .tile {
-  min-width: 0; position: relative; background: var(--bg2); border: 2px solid transparent; border-radius: 14px; overflow: hidden;
-  cursor: pointer; text-align: left; padding: 0; display: flex; flex-direction: column;
+  min-width: 0; position: relative; background: var(--bg2); border: 2px solid transparent; border-radius: 12px; overflow: hidden;
+  cursor: pointer; text-align: left; padding: 0; display: flex; flex-direction: column; container-type: inline-size;
 }
 .tile img, .tile .ph { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; background: var(--grad); }
-.tile .ph { display: grid; place-items: center; font-size: 2rem; font-weight: 900; }
-.tile .meta { padding: 8px 10px 10px; }
-.tile .t { font-weight: 700; font-size: .9rem; line-height: 1.2; }
-.tile .a { color: var(--muted); font-size: .8rem; }
+.tile .ph { display: grid; place-items: center; font-size: 1.6rem; font-weight: 900; }
+.tile .meta { padding: 7px 8px 9px; }
+.tile .t { font-weight: 700; font-size: .82rem; line-height: 1.2; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.tile .a { color: var(--muted); font-size: .74rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tile .badge {
-  position: absolute; top: 8px; left: 8px; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
-  font-weight: 900; color: #120d1d; font-size: .95rem;
+  position: absolute; top: 6px; left: 6px; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
+  font-weight: 900; color: #120d1d; font-size: .85rem;
 }
 .tile.p1 { border-color: var(--gold); } .tile.p1 .badge { background: var(--gold); }
 .tile.p2 { border-color: var(--silver); } .tile.p2 .badge { background: var(--silver); }
@@ -155,15 +154,30 @@ input[type=text]:focus, select:focus { border-color: var(--accent2); }
   position: absolute; top: 8px; right: 8px; width: 34px; height: 34px; border-radius: 50%; border: 0;
   background: rgba(0, 0, 0, .6); color: #fff; cursor: pointer; font-size: .8rem;
 }
+.tile .mini-play { top: 6px; right: 6px; width: 28px; height: 28px; font-size: .7rem; }
 .mini-play.playing { background: var(--accent); }
-.tile.now { box-shadow: 0 0 0 3px var(--accent), 0 12px 30px -10px rgba(255, 79, 154, .6); }
+.tile.now { box-shadow: 0 0 0 3px var(--accent), 0 10px 24px -8px rgba(255, 79, 154, .6); }
 .now-tag { display: none; }
 .tile.now .now-tag {
-  display: block; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -110%);
-  background: rgba(0, 0, 0, .7); color: #fff; font-size: .75rem; font-weight: 700; padding: 4px 10px; border-radius: 99px;
-  white-space: nowrap; animation: pulse 1.6s ease-in-out infinite;
+  /* bottom-left corner of the (square) cover art */
+  display: grid; place-items: center; position: absolute; left: 6px; top: calc(100cqw - 34px);
+  width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: #fff; font-size: .85rem; font-weight: 800;
+  animation: pulse 1.2s ease-in-out infinite;
 }
-@keyframes pulse { 50% { opacity: .55; } }
+@keyframes pulse { 50% { transform: scale(1.15); } }
+/* Phones: five tiles across leaves ~65px each, so tighten everything up. */
+@media (max-width: 560px) {
+  .tiles { gap: 6px; }
+  .tile { border-radius: 9px; border-width: 2px; }
+  .tile .meta { padding: 4px 5px 6px; }
+  .tile .t { font-size: .64rem; }
+  .tile .a { font-size: .58rem; }
+  .tile .ph { font-size: 1.1rem; }
+  .tile .badge { top: 3px; left: 3px; width: 20px; height: 20px; font-size: .7rem; }
+  .tile .mini-play { top: 3px; right: 3px; width: 22px; height: 22px; font-size: .55rem; }
+  .tile.now .now-tag { left: 3px; top: calc(100cqw - 25px); width: 20px; height: 20px; font-size: .65rem; }
+  .tile.now { box-shadow: 0 0 0 2px var(--accent), 0 8px 18px -6px rgba(255, 79, 154, .6); }
+}
 .tile.locked { cursor: default; opacity: .4; }
 .tile.locked .ph { background: var(--card2); color: var(--muted); }
 .tile.pop { animation: pop .4s cubic-bezier(.2, 1.4, .4, 1); }
