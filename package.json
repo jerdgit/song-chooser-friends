@@ -1,0 +1,12 @@
+{
+  "name": "song-chooser-friends",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Rank the top 10 songs of every year with your friends, then compare the group's picks to the Billboard charts.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": { "node": ">=18" }
+}
