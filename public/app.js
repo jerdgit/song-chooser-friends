@@ -166,6 +166,12 @@ async function route() {
     if (parts[2] === 'results') return renderResults(code, parts[3] || 'years');
     return renderLobby(code);
   } catch (err) {
+    // A game that was deleted on the server: drop it from this browser's "Your games" list.
+    if (/game not found/i.test(err.message) && parts[1]) {
+      const code = parts[1].toUpperCase();
+      store.set('sc:games', store.get('sc:games', []).filter(g => g.code !== code));
+      localStorage.removeItem('sc:player:' + code);
+    }
     $app.innerHTML = `<div class="card center stack"><h2>Hmm.</h2><p class="muted">${esc(err.message)}</p><a class="btn" href="#/">Home</a></div>`;
   }
 }

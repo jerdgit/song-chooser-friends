@@ -64,6 +64,18 @@ Votes are saved in `data/db.json` on your computer, so they survive restarts.
 The `trycloudflare.com` address changes every time you restart the tunnel. Games and votes are kept. Send
 friends the new link, or the new address plus the 5-letter game code. To back up the votes, copy `data/db.json`.
 
+### Clearing out games
+
+Stop the server first (Ctrl+C), then:
+
+```bash
+npm run clear-games                  # lists every game, then deletes them all (asks you to type "yes")
+npm run clear-games -- ABCDE         # delete just one game (or several codes)
+npm run clear-games -- --list        # only list the games
+```
+
+A backup of `data/db.json` is saved next to it every time, so a mistake can be undone by copying the backup back.
+
 ### Hosting it on a server
 
 Any host that runs Node works with start command `npm start`. Votes live in one JSON file, so the host needs a
