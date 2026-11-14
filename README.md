@@ -17,9 +17,11 @@ next to the real Billboard ranking.
 
 1. **Create a game.** Name it and choose the years (all of them, one decade, or any range).
 2. **Share the link or the 5-letter code.** Friends open it and type their name. That's it, no accounts.
-3. **Play each year.** The 10 songs come in a shuffled order, so the chart position isn't given away. Each preview
-   plays automatically. Tap ♥ to shortlist a song, then rank your top 3. Afterwards you see where your picks
-   landed on Billboard's chart and what the group has voted so far.
+3. **Play each year.** Everything happens on one screen. The 10 songs appear one at a time, in a shuffled order so
+   the chart position isn't given away. Each song's preview plays, and when it ends the next song appears and
+   starts. Tap **Next ›** to skip ahead, or **Show all songs** to reveal the rest. Tap any song to pick it (first
+   tap = 1st place) at any point, even mid-song. Afterwards you see where your picks landed on Billboard's chart
+   and what the group has voted so far.
 4. **Check the results** at any time (they update live):
    - **Years:** the group's #1 for every year, and whether it matched Billboard's #1. Tap a year to see all
      10 songs with points, who voted for what, and the Billboard rank (sortable either way).

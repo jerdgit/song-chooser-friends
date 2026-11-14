@@ -66,6 +66,7 @@ const Player = {
   el: new Audio(),
   key: null,
   song: null,
+  onEnded: null,  // set by the play screen to auto-advance
   year: null,
   retried: new Set(),
   init() {
@@ -73,7 +74,7 @@ const Player = {
     this.el.addEventListener('timeupdate', () => this.paint());
     this.el.addEventListener('play', () => this.paint());
     this.el.addEventListener('pause', () => this.paint());
-    this.el.addEventListener('ended', () => this.paint());
+    this.el.addEventListener('ended', () => { this.paint(); if (this.onEnded) this.onEnded(this.key); });
     this.el.addEventListener('error', () => this.recover());
   },
   async play(year, song) {
@@ -81,12 +82,13 @@ const Player = {
     if (this.key !== key) {
       this.key = key; this.song = song; this.year = year;
       if (!song.preview) await this.refresh();
-      if (this.key !== key) return;
-      if (!song.preview) { this.paint(); return toast('No preview available for this one'); }
+      if (this.key !== key) return false;
+      if (!song.preview) { this.paint(); toast('No preview available for this one'); return false; }
       this.el.src = song.preview;
     }
     try { await this.el.play(); } catch { /* autoplay blocked: user can hit play */ }
     this.paint();
+    return true;
   },
   toggle(year, song) {
     const key = `${year}-${song.rank}`;
@@ -103,11 +105,14 @@ const Player = {
   },
   async recover() {
     // Stored preview link died — ask the server for a fresh one once.
-    if (!this.song || this.retried.has(this.key)) return this.paint();
-    this.retried.add(this.key);
     const key = this.key;
+    // Preview can't be played: let the play screen move on to the next song.
+    const giveUp = () => { this.paint(); if (this.key === key && this.onEnded) this.onEnded(key); };
+    if (!this.song || this.retried.has(key)) return giveUp();
+    this.retried.add(key);
     await this.refresh();
     if (this.key === key && this.song.preview) { this.el.src = this.song.preview; this.el.play().catch(() => {}); }
+    else giveUp();
   },
   isPlaying(key) { return this.key === key && !this.el.paused && !this.el.ended; },
   paint() {
@@ -332,14 +337,47 @@ async function renderPlay(code, year) {
   if (!game.players[me.playerId]) { location.hash = `#/g/${code}`; return; }
   if (!game.years.includes(year)) throw new Error('That year is not part of this game.');
 
-  const songs = SONGS[year];
-  const order = seededOrder(`${me.playerId}:${year}`, songs.map(s => s.rank));
-  const favKey = `sc:fav:${code}:${year}`;
+  const order = seededOrder(`${me.playerId}:${year}`, SONGS[year].map(s => s.rank));
   const existing = (game.votes[me.playerId] || {})[year];
-  const st = { step: existing ? 'rank' : 'intro', idx: 0, picks: existing ? existing.slice() : [], fav: new Set(store.get(favKey, [])), seen: new Set(), changing: !!existing };
+  // Steps: 'intro' -> 'board' (songs are revealed and played one by one, and picked on the same screen) -> 'reveal'
+  const st = {
+    step: existing ? 'board' : 'intro',
+    picks: existing ? existing.slice() : [],
+    changing: !!existing,
+    revealed: existing ? order.length : 0,   // how many songs are showing
+    autoplay: false,                          // keep moving to the next song when one ends
+    pop: null,                                // rank of the song that just appeared (for the animation)
+  };
   const yi = game.years.indexOf(year);
+  const current = () => songOf(year, order[st.revealed - 1]);
+  const curKey = () => `${year}-${order[st.revealed - 1]}`;
 
   const go = step => { st.step = step; st.animate = true; draw(); window.scrollTo(0, 0); };
+  const redraw = () => { const y = window.scrollY; st.animate = false; draw(); window.scrollTo(0, y); };
+
+  async function playCurrent() {
+    const key = curKey();
+    const ok = await Player.play(year, current());
+    // No preview for this one: give it a moment on screen, then keep going.
+    if (!ok) setTimeout(() => { if (st.autoplay && curKey() === key) advance(); }, 2500);
+  }
+  function advance() {
+    if (st.revealed < order.length) {
+      st.revealed++;
+      st.autoplay = true;
+      st.pop = order[st.revealed - 1];
+      redraw();
+      document.querySelector(`[data-tile="${st.pop}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      playCurrent();
+    } else {
+      st.autoplay = false;
+      redraw();
+    }
+  }
+  function showAll() { st.revealed = order.length; st.autoplay = false; st.pop = null; Player.stop(); redraw(); }
+
+  // When the song that's "up" finishes, reveal and play the next one.
+  Player.onEnded = key => { if (st.step === 'board' && st.autoplay && key === curKey()) advance(); };
 
   function draw() {
     if (st.step === 'intro') {
@@ -347,51 +385,18 @@ async function renderPlay(code, year) {
         <div class="center stack fade-in" style="padding-top:30px">
           <div class="muted">Year ${yi + 1} of ${game.years.length}</div>
           <div class="year-title">${year}</div>
-          <p class="muted">Ten of the year's biggest songs, shuffled. Listen to each one, then pick your top 3.</p>
+          <p class="muted">Ten of the year's biggest songs, shuffled. They'll appear and play one at a time. Pick your top 3 whenever you're ready.</p>
           <button class="btn primary big" id="begin">▶ Start listening</button>
-          <div><button class="linkbtn" id="skip">I know these. Skip to picking</button></div>
+          <div><button class="linkbtn" id="skip">I know these. Show them all</button></div>
         </div>`;
-      document.getElementById('begin').onclick = () => { st.idx = 0; go('listen'); };
-      document.getElementById('skip').onclick = () => { Player.stop(); go('rank'); };
+      document.getElementById('begin').onclick = () => { st.revealed = 1; st.autoplay = true; st.pop = order[0]; go('board'); playCurrent(); };
+      document.getElementById('skip').onclick = () => { st.revealed = order.length; go('board'); };
       return;
     }
 
-    if (st.step === 'listen') {
-      const song = songOf(year, order[st.idx]);
-      const key = `${year}-${song.rank}`;
-      st.seen.add(song.rank);
-      $app.innerHTML = `
-        <div class="player-card fade-in">
-          <div class="row spread small muted" style="margin-bottom:6px"><span><b style="color:var(--text)">${year}</b></span><span>Song ${st.idx + 1} of ${order.length}</span></div>
-          <div class="dots">${order.map((r, i) => `<i class="${i === st.idx ? 'cur' : st.seen.has(r) ? 'seen' : ''}"></i>`).join('')}</div>
-          ${art(song)}
-          <div class="song-title">${esc(song.title)}</div>
-          <div class="song-artist">${esc(song.artist)}</div>
-          <div class="audio-bar">
-            <button class="play-btn" data-play="${key}" aria-label="Play preview">▶</button>
-            <div class="progress"><i data-progress="${key}"></i></div>
-            <button class="heart ${st.fav.has(song.rank) ? 'on' : ''}" id="fav" aria-label="Shortlist this song" title="Shortlist">♥</button>
-          </div>
-          <div class="small muted">${song.preview ? '30-second preview' : 'Looking for a preview…'} · ♥ to shortlist it for later</div>
-          <div class="nav-row">
-            <button class="btn ghost" id="prev" ${st.idx === 0 ? 'disabled' : ''}>← Back</button>
-            <button class="btn primary" id="next">${st.idx === order.length - 1 ? 'Pick my top 3 →' : 'Next song →'}</button>
-          </div>
-          <p><button class="linkbtn small" id="skip">Skip to picking</button></p>
-        </div>`;
-      Player.play(year, song);
-      document.getElementById('fav').onclick = e => {
-        st.fav.has(song.rank) ? st.fav.delete(song.rank) : st.fav.add(song.rank);
-        store.set(favKey, [...st.fav]);
-        e.currentTarget.classList.toggle('on', st.fav.has(song.rank));
-      };
-      document.getElementById('prev').onclick = () => { st.idx--; draw(); };
-      document.getElementById('next').onclick = () => { if (st.idx < order.length - 1) { st.idx++; draw(); } else { Player.stop(); go('rank'); } };
-      document.getElementById('skip').onclick = () => { Player.stop(); go('rank'); };
-      return;
-    }
-
-    if (st.step === 'rank') {
+    if (st.step === 'board') {
+      const listening = st.revealed > 0 && (st.revealed < order.length || st.autoplay);
+      const cur = st.revealed ? current() : null;
       const slot = i => {
         const r = st.picks[i]; const s = r && songOf(year, r);
         return `<div class="slot p${i + 1} ${s ? 'filled' : ''}"><span class="medal">${MEDAL[i]}</span>
@@ -399,17 +404,33 @@ async function renderPlay(code, year) {
       };
       $app.innerHTML = `
         <div class="${st.animate ? 'fade-in' : ''}">
+          ${listening ? `
+          <div class="now-playing">
+            ${cur.art ? `<img src="${esc(cur.art)}" alt="">` : `<div class="ph">${esc(cur.title[0])}</div>`}
+            <div style="min-width:0">
+              <div class="np-label">Song ${st.revealed} of ${order.length}</div>
+              <div class="t">${esc(cur.title)}</div><div class="a">${esc(cur.artist)}</div>
+            </div>
+            <div class="np-controls">
+              <button class="np-play" data-play="${curKey()}" aria-label="Play preview">▶</button>
+              <button class="btn primary np-next" id="next">${st.revealed < order.length ? 'Next ›' : 'Done'}</button>
+            </div>
+            <div class="progress np-progress"><i data-progress="${curKey()}"></i></div>
+          </div>` : ''}
           <div class="row spread" style="margin-bottom:8px">
             <h2 style="margin:0">Your top 3 of ${year}</h2>
-            <button class="linkbtn small" id="relisten">↺ Listen again</button>
+            ${st.revealed < order.length ? `<button class="linkbtn small" id="showall">Show all songs</button>` : ''}
           </div>
-          <p class="muted small">Tap songs in order: first tap is 1st place. Tap a picked song to remove it.${st.fav.size ? ' ♥ = your shortlist.' : ''}</p>
+          <p class="muted small">Tap a song to pick it: first tap is 1st place. Tap a picked song to remove it. ${listening ? 'Each song plays in turn.' : 'Tap ▶ on any song to hear it again.'}</p>
           <div class="slots">${[0, 1, 2].map(slot).join('')}</div>
-          <div class="tiles">${order.map(r => {
+          <div class="tiles">${order.map((r, i) => {
+            if (i >= st.revealed) return `<div class="tile locked" aria-hidden="true"><div class="ph">${i + 1}</div><div class="meta"><div class="t">Song ${i + 1}</div><div class="a">Coming up</div></div></div>`;
             const s = songOf(year, r); const p = st.picks.indexOf(r);
-            return `<div class="tile ${p >= 0 ? 'p' + (p + 1) : ''} ${st.fav.has(r) ? 'fav' : ''}" data-pick="${r}" role="button" tabindex="0" aria-pressed="${p >= 0}">
+            const now = listening && i === st.revealed - 1;
+            return `<div class="tile ${p >= 0 ? 'p' + (p + 1) : ''} ${now ? 'now' : ''} ${st.pop === r ? 'pop' : ''}" data-pick="${r}" data-tile="${r}" role="button" tabindex="0" aria-pressed="${p >= 0}">
               ${s.art ? `<img src="${esc(s.art)}" alt="" loading="lazy">` : `<div class="ph">${esc(s.title[0])}</div>`}
               ${p >= 0 ? `<span class="badge">${p + 1}</span>` : ''}
+              ${now ? '<span class="now-tag">♪ Now playing</span>' : ''}
               ${miniPlay(year, r)}
               <div class="meta"><div class="t">${esc(s.title)}</div><div class="a">${esc(s.artist)}</div></div>
             </div>`;
@@ -420,6 +441,7 @@ async function renderPlay(code, year) {
             </button>
           </div>
         </div>`;
+      st.pop = null;
       Player.paint();
       $app.querySelectorAll('[data-pick]').forEach(t => {
         const act = () => {
@@ -427,16 +449,18 @@ async function renderPlay(code, year) {
           if (i >= 0) st.picks.splice(i, 1);
           else if (st.picks.length < 3) st.picks.push(r);
           else return toast('You already have 3. Tap one to remove it.');
-          const y = window.scrollY; st.animate = false; draw(); window.scrollTo(0, y);
+          redraw();
         };
         t.addEventListener('click', act);
         t.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(); } });
       });
-      document.getElementById('relisten').onclick = () => { st.idx = 0; go('listen'); };
+      document.getElementById('next')?.addEventListener('click', advance);
+      document.getElementById('showall')?.addEventListener('click', showAll);
       document.getElementById('submit').onclick = async e => {
         e.currentTarget.disabled = true;
         try {
           await api(`/games/${code}/votes/${year}`, { method: 'PUT', body: { playerId: me.playerId, token: me.token, picks: st.picks } });
+          st.autoplay = false;
           Player.stop();
           game = await api('/games/' + code);
           go('reveal');
@@ -487,13 +511,12 @@ async function renderPlay(code, year) {
   }
 
   const onKey = e => {
-    if (st.step !== 'listen' || e.target.matches('input, textarea')) return;
-    if (e.key === 'ArrowRight') document.getElementById('next')?.click();
-    if (e.key === 'ArrowLeft') document.getElementById('prev')?.click();
-    if (e.key === ' ') { e.preventDefault(); Player.toggle(year, songOf(year, order[st.idx])); }
+    if (st.step !== 'board' || !st.revealed || e.target.matches('input, textarea')) return;
+    if (e.key === 'ArrowRight') { e.preventDefault(); advance(); }
+    if (e.key === ' ' && !e.target.closest('[data-pick]')) { e.preventDefault(); Player.toggle(year, current()); }
   };
   document.addEventListener('keydown', onKey);
-  cleanup = () => { document.removeEventListener('keydown', onKey); Player.stop(); };
+  cleanup = () => { document.removeEventListener('keydown', onKey); Player.onEnded = null; Player.stop(); };
   draw();
 }
 
