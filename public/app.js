@@ -424,15 +424,17 @@ async function renderPlay(code, year) {
           <p class="muted small">Tap a song to pick it: first tap is 1st place. Tap a picked song to remove it. ${listening ? 'Each song plays in turn.' : 'Tap ▶ on any song to hear it again.'}</p>
           <div class="slots">${[0, 1, 2].map(slot).join('')}</div>
           <div class="tiles">${order.map((r, i) => {
-            if (i >= st.revealed) return `<div class="tile locked" aria-hidden="true"><div class="ph">${i + 1}</div><div class="meta"><div class="t">Song ${i + 1}</div><div class="a">Up next</div></div></div>`;
+            if (i >= st.revealed) return `<div class="tile locked" aria-hidden="true"><div class="ph">${i + 1}</div><div class="meta"><div class="tw"><span class="t">Song ${i + 1}</span></div><div class="a">Up next</div></div></div>`;
             const s = songOf(year, r); const p = st.picks.indexOf(r);
             const now = listening && i === st.revealed - 1;
             return `<div class="tile ${p >= 0 ? 'p' + (p + 1) : ''} ${now ? 'now' : ''} ${st.pop === r ? 'pop' : ''}" data-pick="${r}" data-tile="${r}" role="button" tabindex="0" aria-pressed="${p >= 0}">
               ${s.art ? `<img src="${esc(s.art)}" alt="" loading="lazy">` : `<div class="ph">${esc(s.title[0])}</div>`}
               ${p >= 0 ? `<span class="badge">${p + 1}</span>` : ''}
               ${now ? '<span class="now-tag" title="Now playing">♪</span>' : ''}
-              ${miniPlay(year, r)}
-              <div class="meta"><div class="t">${esc(s.title)}</div><div class="a">${esc(s.artist)}</div></div>
+              <div class="meta">
+                <div class="tw"><button class="tile-play" data-play="${year}-${r}" aria-label="Play preview">▶</button><span class="t">${esc(s.title)}</span></div>
+                <div class="a">${esc(s.artist)}</div>
+              </div>
             </div>`;
           }).join('')}</div>
           <div class="sticky-submit">
@@ -444,7 +446,8 @@ async function renderPlay(code, year) {
       st.pop = null;
       Player.paint();
       $app.querySelectorAll('[data-pick]').forEach(t => {
-        const act = () => {
+        const act = e => {
+          if (e.target.closest('[data-play]')) return;  // ▶ only plays; it never picks
           const r = Number(t.dataset.pick); const i = st.picks.indexOf(r);
           if (i >= 0) st.picks.splice(i, 1);
           else if (st.picks.length < 3) st.picks.push(r);
@@ -452,7 +455,7 @@ async function renderPlay(code, year) {
           redraw();
         };
         t.addEventListener('click', act);
-        t.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(); } });
+        t.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && !e.target.closest('[data-play]')) { e.preventDefault(); act(e); } });
       });
       document.getElementById('next')?.addEventListener('click', advance);
       document.getElementById('showall')?.addEventListener('click', showAll);
