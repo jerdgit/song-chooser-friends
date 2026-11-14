@@ -46,17 +46,27 @@ Environment variables (both optional):
 - `PORT`: the port to listen on (default `3000`)
 - `DATA_DIR`: the folder for `db.json`, which holds all games and votes (default `./data`)
 
-### Putting it online for your friends
+### Hosting it from your own computer (free)
 
-Any host that runs Node works. Votes are saved to one JSON file, so the host needs a **persistent disk**:
+Votes are saved in `data/db.json` on your computer, so they survive restarts.
 
-- **Railway / Fly.io / Render (paid tier):** deploy the repo with start command `npm start`. Attach a volume
-  mounted at `/data` and set `DATA_DIR=/data`.
-- **Your own computer, for a game night:** run `npm start`, then share it with
-  `npx cloudflared tunnel --url http://localhost:3000` (or ngrok) and send friends the URL it prints.
+1. In one terminal: `npm start`
+2. In a second terminal: `npx cloudflared tunnel --url http://localhost:3000`
+   (or install it with `brew install cloudflared` / `winget install Cloudflare.cloudflared` and run
+   `cloudflared tunnel --url http://localhost:3000`). It prints a public link like
+   `https://some-random-words.trycloudflare.com`.
+3. Open **that** link (not `localhost`) to create the game. The invite link in the lobby is built from the address
+   you're using, so a game opened on `localhost` would hand out a link that only works on your computer.
+4. Send friends the link. Keep both terminals open and stop your computer from sleeping while people play.
 
-> Free tiers with no persistent disk (such as Render's free web service) wipe `db.json` whenever they restart,
-> so all the votes disappear with it.
+The `trycloudflare.com` address changes every time you restart the tunnel. Games and votes are kept. Send
+friends the new link, or the new address plus the 5-letter game code. To back up the votes, copy `data/db.json`.
+
+### Hosting it on a server
+
+Any host that runs Node works with start command `npm start`. Votes live in one JSON file, so the host needs a
+**persistent disk** mounted at a folder you point `DATA_DIR` to. Free tiers with no persistent disk (such as
+Render's free web service) wipe the file whenever they restart, so all the votes disappear with it.
 
 ## Where the data comes from
 
