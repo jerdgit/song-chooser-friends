@@ -1,39 +1,45 @@
 # Song Chooser (friends edition)
 
-A private game for you and your friends. Each year from **1960 to 2025** has the 10 biggest songs from the
-Billboard Year-End Hot 100. You hear a 30-second preview of each song, one at a time, then pick your
-top 3:
+A live party game for you and your friends. Everyone joins one lobby, then you go through the years together.
+Each year has the 10 biggest songs from the Billboard Year-End Hot 100 (**1960 to 2025**). You hear a
+30-second preview of each, then drag your medals and your prediction onto songs:
 
-| Pick | Points |
-|------|--------|
-| 🥇 1st | 5 |
-| 🥈 2nd | 3 |
-| 🥉 3rd | 1 |
+| Token | What it means | Points |
+|-------|---------------|--------|
+| 🥇 | Your favorite | 5 to that song |
+| 🥈 | Your 2nd favorite | 3 to that song |
+| 🥉 | Your 3rd favorite | 1 to that song |
+| 🔮 | Your guess for Billboard's actual #1 that year | **+1 for you** if you're right |
 
-Everyone's points are added up per year, and the results page shows the group's ranking for each year
-next to the real Billboard ranking.
+Medal points decide the group's favorite songs. 🔮 guesses are a running scoreboard: whoever guesses the most
+#1s wins.
 
 ## How a game works
 
-1. **Create a game.** Name it and choose the years (all of them, one decade, or any range).
-2. **Share the link or the 5-letter code.** Friends open it and type their name. That's it, no accounts.
-3. **Play each year.** Everything happens on one screen. The 10 songs appear one at a time, in a shuffled order so
-   the chart position isn't given away. Each song's preview plays, and when it ends the next song appears and
-   starts. Tap **Next ›** to skip ahead, or **Show all songs** to reveal the rest. Tap any song to pick it (first
-   tap = 1st place) at any point, even mid-song. Once you lock in, that year's Billboard top 10 counts down from
-   #10 to #1 with your picks highlighted, and after 10 seconds you move on to the next year automatically (tap
-   **Stay** to keep looking, or **Go now** to skip ahead). The group's standings for that year are further down.
-4. **Check the results** at any time (they update live):
-   - **Years:** the group's #1 for every year, and whether it matched Billboard's #1. Tap a year to see all
-     10 songs with points, who voted for what, and the Billboard rank (sortable either way).
-   - **Friends:** each person's chart-match count, how often they agreed with the group, how mainstream their
-     #1 picks are (average Billboard rank), and their "taste twin" in the group.
-   - **Hall of Fame:** the group's most-loved songs across all years, underdog wins (group #1s that Billboard
-     ranked 6th or lower), and snubbed #1s that got zero points.
+1. **Host a game.** Name it and choose the years (a decade is a good length). You're the host 👑.
+2. **Pregame lobby.** Share the link or the 5-letter code. Friends type their name and pick a goofy icon
+   (🦖 🦆 🌮 🤡 🥸 ...). Everyone gets a different one, and you can swap icons in the lobby. When everyone's in,
+   the host taps **Start the game**.
+3. **Each year, together.** Everyone is on the same year. On each phone the songs appear and play one at a time
+   (**Next ›** skips ahead, **Show all songs** reveals the rest). Drag 🥇 🥈 🥉 and 🔮 onto songs, or tap a token
+   and then tap a song. Drag a token off a song to take it back. Then **Lock in**. Icons at the top tick ✓ as
+   people lock in. Until everyone has, you can unlock and change your picks.
+4. **The reveal.** Once the last person locks in, everyone sees Billboard's real top 10 for that year at the same
+   moment. Each song shows the icons of whoever medaled it or 🔮-guessed it, the group's points, and the 🔮
+   scoreboard. After 15 seconds the whole group moves to the next year.
+5. **Game over.** After the last year, the 🔮 champion is crowned, followed by the final scoreboard and the
+   group's most-loved songs.
 
-Nobody has to finish every year. Results count whatever each person has voted on. You can go back and change
-a vote. On a new device, enter the same name to pick up where you left off. Whoever created the game can
-remove players from the lobby.
+**Host controls:** remove a player (lobby ✕) · **Reveal now** if someone wandered off mid-year · **Pause** or
+**Next year** during a reveal · **End the game now**.
+
+**Results** (the Results tab, any time) cover every year played:
+- **Years:** the group's #1 vs. Billboard's #1, and who placed what on every song.
+- **Players:** 🔮 record, how mainstream each person's 🥇 picks are, and their "taste twin".
+- **Hall of Fame:** most-loved songs, underdog wins and snubbed #1s.
+
+On a new device, enter the same name to pick up where you left off. To change how long the reveal shows, start
+the server with `REVEAL_SECONDS=20 npm start`.
 
 ## Run it
 

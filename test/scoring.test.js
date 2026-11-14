@@ -3,10 +3,11 @@ const assert = require('node:assert');
 const Scoring = require('../public/scoring.js');
 
 const songs = { 2000: Array.from({ length: 10 }, (_, i) => ({ rank: i + 1, title: 'S' + (i + 1), artist: 'A' })) };
-const game = (votes) => ({
+const game = (votes, predictions = {}) => ({
   years: [2000],
   players: Object.fromEntries(Object.keys(votes).map(id => [id, { name: id }])),
   votes: Object.fromEntries(Object.entries(votes).map(([id, picks]) => [id, picks ? { 2000: picks } : {}])),
+  predictions: Object.fromEntries(Object.entries(predictions).map(([id, r]) => [id, { 2000: r }])),
 });
 
 test('5/3/1 points are summed per song', () => {
@@ -56,4 +57,16 @@ test('summary stats per player', () => {
   assert.strictEqual(b.avgFirstPickRank, 7);
   assert.strictEqual(a.twin.playerId, 'b');
   assert.strictEqual(s.voted.length, 1);
+});
+
+test('#1 predictions: 1 point for guessing Billboard #1, leaderboard shares places on ties', () => {
+  const g = game({ a: [1, 2, 3], b: [4, 5, 6], c: [7, 8, 9] }, { a: 1, b: 2, c: 1 });
+  const s = Scoring.summary(g, songs);
+  const by = id => s.players.find(p => p.playerId === id);
+  assert.strictEqual(by('a').predictCorrect, 1);
+  assert.strictEqual(by('b').predictCorrect, 0);
+  assert.strictEqual(by('c').predictTotal, 1);
+  assert.deepStrictEqual(s.leaderboard.map(p => [p.playerId, p.place]), [['a', 1], ['c', 1], ['b', 3]]);
+  const r = Scoring.yearResults(g, songs, 2000);
+  assert.deepStrictEqual(r.rows.find(x => x.rank === 1).predictors.sort(), ['a', 'c']);
 });

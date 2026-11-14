@@ -41,9 +41,10 @@ function ask(question) {
   if (!games.length) { console.log('No saved games. Nothing to clear.'); return; }
   console.log(`Saved games (${games.length}):`);
   for (const g of games.sort((a, b) => a.createdAt - b.createdAt)) {
-    const players = Object.values(g.players).map(p => p.name);
+    const players = Object.values(g.players).map(p => `${p.icon || ''} ${p.name}`.trim());
     const votes = Object.values(g.votes).reduce((n, v) => n + Object.keys(v).length, 0);
-    console.log(`  ${g.code}  "${g.name}"  ${g.years[0]}–${g.years.at(-1)}  created ${new Date(g.createdAt).toLocaleDateString()}  ` +
+    const status = { lobby: 'in lobby', picking: 'playing', reveal: 'playing', done: 'finished' }[g.state?.phase] || 'old format';
+    console.log(`  ${g.code}  "${g.name}"  ${g.years[0]}–${g.years.at(-1)}  ${status}  created ${new Date(g.createdAt).toLocaleDateString()}  ` +
       `${players.length} player${players.length === 1 ? '' : 's'}${players.length ? ` (${players.join(', ')})` : ''}, ${votes} year-vote${votes === 1 ? '' : 's'}`);
   }
   if (flags.has('--list')) return;

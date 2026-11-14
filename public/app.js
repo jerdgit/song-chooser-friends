@@ -5,7 +5,15 @@ const $app = document.getElementById('app');
 const $nav = document.getElementById('topnav');
 const PLACE = ['1st', '2nd', '3rd'];
 const MEDAL = ['🥇', '🥈', '🥉'];
-const REVEAL_SECONDS = 10; // how long the Billboard chart shows after you vote, before moving on
+const ICONS = Scoring.ICONS;
+// The four things you place on songs each year: three medals and the #1 guess.
+const TOKENS = {
+  0: { emoji: '🥇', label: '1st', sub: '5 pts' },
+  1: { emoji: '🥈', label: '2nd', sub: '3 pts' },
+  2: { emoji: '🥉', label: '3rd', sub: '1 pt' },
+  p: { emoji: '🔮', label: '#1 guess', sub: "Billboard's #1?" },
+};
+const POLL_MS = 1500;
 
 let SONGS = null;       // { year: [{rank,title,artist,preview,art,link}] }
 let YEARS = [];
@@ -17,6 +25,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const store = {
   get(k, d = null) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* private mode */ } },
+  del(k) { try { localStorage.removeItem(k); } catch { /* ignore */ } },
 };
 const meFor = code => store.get('sc:player:' + code);
 const hostFor = code => store.get('sc:host:' + code);
@@ -28,7 +37,7 @@ function rememberGame(code, name) {
 function toast(msg) {
   const t = document.getElementById('toast');
   t.textContent = msg; t.classList.add('show');
-  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), 2200);
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), 2400);
 }
 async function api(path, opts = {}) {
   const res = await fetch('/api' + path, {
@@ -40,11 +49,13 @@ async function api(path, opts = {}) {
   if (!res.ok) throw new Error(data.error || 'Something went wrong');
   return data;
 }
-function hue(str) { let h = 0; for (const c of String(str)) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
-function avatar(name) {
-  const initials = name.split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
-  return `<span class="avatar" style="background:hsl(${hue(name)} 80% 72%)">${esc(initials)}</span>`;
+function hue(str) { let h = 0; for (const c of String(str)) h = (h * 31 + c.codePointAt(0)) % 360; return h; }
+// A player's goofy icon in a colored bubble. size: '' | 'sm' | 'lg' | 'xl'
+function avatar(p, size = '', badge = '') {
+  const icon = p?.icon || '❔';
+  return `<span class="avatar ${size}" style="background:hsl(${hue(icon)} 85% 80%)" title="${esc(p?.name || '')}">${icon}${badge ? `<i class="av-badge">${badge}</i>` : ''}</span>`;
 }
+const who = p => `${avatar(p, 'sm')}<span>${esc(p?.name || 'Someone')}</span>`;
 function art(song, cls = 'art') {
   if (song.art) return `<img class="${cls}" src="${esc(song.art)}" alt="" loading="lazy">`;
   return `<div class="${cls} ph">${esc(song.title[0] || '♪')}</div>`;
@@ -61,13 +72,18 @@ function seededOrder(seedStr, items) {
   return out;
 }
 const songOf = (year, rank) => SONGS[year].find(s => s.rank === rank);
+function iconGrid(selected, taken) {
+  return `<div class="icon-grid">${ICONS.map(i => `<button type="button" class="icon-opt ${i === selected ? 'on' : ''}" data-icon="${i}"
+    ${taken.has(i) && i !== selected ? 'disabled title="Taken"' : ''}>${i}</button>`).join('')}</div>`;
+}
 
 // ---------------------------------------------------------------- audio
 const Player = {
   el: new Audio(),
   key: null,
   song: null,
-  onEnded: null,  // set by the play screen to auto-advance
+  onEnded: null,    // set by the picking screen to auto-advance
+  unlocked: false,  // true once the browser has let us play sound (after a tap)
   year: null,
   retried: new Set(),
   init() {
@@ -87,7 +103,7 @@ const Player = {
       if (!song.preview) { this.paint(); toast('No preview available for this one'); return false; }
       this.el.src = song.preview;
     }
-    try { await this.el.play(); } catch { /* autoplay blocked: user can hit play */ }
+    try { await this.el.play(); this.unlocked = true; } catch { /* autoplay blocked: user can hit play */ }
     this.paint();
     return true;
   },
@@ -107,7 +123,7 @@ const Player = {
   async recover() {
     // Stored preview link died — ask the server for a fresh one once.
     const key = this.key;
-    // Preview can't be played: let the play screen move on to the next song.
+    // Preview can't be played: let the picking screen move on to the next song.
     const giveUp = () => { this.paint(); if (this.key === key && this.onEnded) this.onEnded(key); };
     if (!this.song || this.retried.has(key)) return giveUp();
     this.retried.add(key);
@@ -131,7 +147,7 @@ const Player = {
 };
 Player.init();
 
-// Delegate mini play buttons everywhere.
+// Delegate play buttons everywhere.
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-play]');
   if (!b) return;
@@ -146,7 +162,7 @@ function setNav(code) {
   if (!code) { $nav.innerHTML = ''; return; }
   const h = location.hash;
   $nav.innerHTML = `
-    <a href="#/g/${code}" class="${!h.includes('/results') && !h.includes('/play') ? 'active' : ''}">Lobby</a>
+    <a href="#/g/${code}" class="${!h.includes('/results') ? 'active' : ''}">Game</a>
     <a href="#/g/${code}/results" class="${h.includes('/results') ? 'active' : ''}">Results</a>`;
 }
 async function route() {
@@ -162,16 +178,16 @@ async function route() {
     }
     if (parts[0] !== 'g') { setNav(null); return renderHome(); }
     const code = (parts[1] || '').toUpperCase();
+    if (parts[2] && parts[2] !== 'results') { location.replace(`#/g/${code}`); return; } // old links
     setNav(code);
-    if (parts[2] === 'play') return renderPlay(code, Number(parts[3]));
     if (parts[2] === 'results') return renderResults(code, parts[3] || 'years');
-    return renderLobby(code);
+    return renderGame(code);
   } catch (err) {
     // A game that was deleted on the server: drop it from this browser's "Your games" list.
     if (/game not found/i.test(err.message) && parts[1]) {
       const code = parts[1].toUpperCase();
       store.set('sc:games', store.get('sc:games', []).filter(g => g.code !== code));
-      localStorage.removeItem('sc:player:' + code);
+      store.del('sc:player:' + code);
     }
     $app.innerHTML = `<div class="card center stack"><h2>Hmm.</h2><p class="muted">${esc(err.message)}</p><a class="btn" href="#/">Home</a></div>`;
   }
@@ -188,8 +204,8 @@ function renderHome() {
   $app.innerHTML = `
     <section class="hero fade-in">
       <h1>Pick your songs.<br>Settle the debate.</h1>
-      <p>Every year, the 10 biggest hits. Listen to each one, then crown your top 3.
-      Your friends do the same, and at the end you'll see how the group ranked every year next to the real Billboard charts.</p>
+      <p>Get everyone in one lobby. Each year, listen to the 10 biggest hits together, drag your 🥇🥈🥉 onto your favorites
+      and your 🔮 onto the song you think was Billboard's #1. When everyone locks in, see who picked what.</p>
     </section>
     <div class="stack">
       ${mine.length ? `<div class="card stack"><h2>Your games</h2><div class="list">${mine.map(g => `
@@ -197,20 +213,20 @@ function renderHome() {
           <div><div class="t">${esc(g.name)}</div><div class="s">Code ${esc(g.code)}</div></div><span class="pill">Open →</span>
         </a>`).join('')}</div></div>` : ''}
       <form class="card stack" id="create">
-        <h2>Start a game</h2>
+        <h2>Host a game</h2>
         <div><label for="gname">Game name</label><input type="text" id="gname" maxlength="30" placeholder="e.g. Friday Night Hits" required></div>
         <div>
           <label>Years</label>
           <div class="chips" id="presets">
-            <button type="button" class="chip on" data-r="${first}-${last}">All (${first}–${last})</button>
-            ${decades.map(d => `<button type="button" class="chip" data-r="${Math.max(d, first)}-${Math.min(d + 9, last)}">${String(d).slice(2)}s</button>`).join('')}
+            <button type="button" class="chip" data-r="${first}-${last}">All (${first}–${last})</button>
+            ${decades.map(d => `<button type="button" class="chip ${d === 1990 ? 'on' : ''}" data-r="${Math.max(d, first)}-${Math.min(d + 9, last)}">${String(d).slice(2)}s</button>`).join('')}
           </div>
         </div>
         <div class="grid2">
-          <div><label for="from">From</label><select id="from">${yearOpts(first)}</select></div>
-          <div><label for="to">To</label><select id="to">${yearOpts(last)}</select></div>
+          <div><label for="from">From</label><select id="from">${yearOpts(1990)}</select></div>
+          <div><label for="to">To</label><select id="to">${yearOpts(1999)}</select></div>
         </div>
-        <p class="small muted">Nobody has to finish every year. Results count whatever each person has voted on.</p>
+        <p class="small muted">Everyone plays the years in order, together. A decade (10 years) takes roughly 30–45 minutes.</p>
         <button class="btn primary block big">Create game</button>
       </form>
       <form class="card stack" id="join">
@@ -244,333 +260,525 @@ function renderHome() {
   });
 }
 
-// ---------------------------------------------------------------- lobby / join
-async function renderLobby(code) {
-  Player.stop();
-  let game = await api('/games/' + code);
-  rememberGame(code, game.name);
-  const me = meFor(code);
-  if (!me || !game.players[me.playerId]) return renderJoin(game);
-
-  const paint = () => {
-    const myVotes = game.votes[me.playerId] || {};
-    const done = game.years.filter(y => myVotes[y]).length;
-    const next = game.years.find(y => !myVotes[y]);
-    const host = hostFor(code);
-    const link = `${location.origin}/#/g/${code}`;
-    const players = Object.entries(game.players).sort((a, b) => a[1].joinedAt - b[1].joinedAt);
-    $app.innerHTML = `
-      <div class="stack fade-in">
-        <div class="center">
-          <span class="pill">Hi ${esc(me.name)} 👋</span>
-          <h1 style="margin-top:10px">${esc(game.name)}</h1>
-          <p class="muted">${game.years[0]}–${game.years.at(-1)} · ${game.years.length} years · 10 songs each</p>
-        </div>
-        <div class="card stack">
-          <div class="row spread"><h2 style="margin:0">Your progress</h2><span class="muted">${done} / ${game.years.length}</span></div>
-          <div class="progress"><i style="width:${(done / game.years.length) * 100}%"></i></div>
-          ${next ? `<a class="btn primary big block" href="#/g/${code}/play/${next}">${done ? 'Keep going' : 'Start'} with ${next} →</a>`
-                 : `<a class="btn primary big block" href="#/g/${code}/results">You've voted on every year. See results →</a>`}
-          <div><label>Jump to any year (tap a ✓ year to change your vote)</label>
-            <div class="years">${game.years.map(y => `<a class="year-chip ${myVotes[y] ? 'done' : ''}" href="#/g/${code}/play/${y}">${y}</a>`).join('')}</div>
-          </div>
-        </div>
-        <div class="card stack">
-          <h2>Invite friends</h2>
-          <div class="center"><div class="small muted">Game code</div><div class="code-big">${code}</div></div>
-          <div class="share"><input type="text" readonly value="${esc(link)}" id="link"><button class="btn" id="copy">Copy</button></div>
-        </div>
-        <div class="card stack">
-          <div class="row spread"><h2 style="margin:0">Players</h2><a href="#/g/${code}/results" class="pill">Results →</a></div>
-          <div class="players">${players.map(([id, p]) => {
-            const n = game.years.filter(y => (game.votes[id] || {})[y]).length;
-            return `<div class="player">${avatar(p.name)}<div style="flex:1;min-width:0">
-                <div class="row spread"><b>${esc(p.name)}${id === me.playerId ? ' (you)' : ''}</b><span class="small muted">${n}/${game.years.length}</span></div>
-                <div class="progress" style="margin-top:6px"><i style="width:${(n / game.years.length) * 100}%"></i></div></div>
-                ${host && id !== me.playerId ? `<button class="linkbtn small" data-kick="${id}" title="Remove player">✕</button>` : ''}
-              </div>`;
-          }).join('')}</div>
-        </div>
-        <p class="center small muted">Not ${esc(me.name)}? <button class="linkbtn" id="switch">Switch player</button></p>
-      </div>`;
-    document.getElementById('copy').onclick = async () => {
-      try { await navigator.clipboard.writeText(link); toast('Link copied!'); }
-      catch { document.getElementById('link').select(); toast('Copy the link above'); }
-    };
-    document.getElementById('switch').onclick = () => { localStorage.removeItem('sc:player:' + code); route(); };
-    document.querySelectorAll('[data-kick]').forEach(b => b.onclick = async () => {
-      const p = game.players[b.dataset.kick];
-      if (!confirm(`Remove ${p.name} and all of their votes?`)) return;
-      try { await api(`/games/${code}/players/${b.dataset.kick}`, { method: 'DELETE', headers: { 'X-Host-Token': host } }); game = await api('/games/' + code); paint(); }
-      catch (err) { toast(err.message); }
-    });
-  };
-  paint();
-  pollTimer = setInterval(async () => {
-    if (document.hidden || document.activeElement?.id === 'link') return;
-    try { const g = await api('/games/' + code); if (JSON.stringify(g) !== JSON.stringify(game)) { game = g; paint(); } } catch { /* ignore */ }
-  }, 6000);
-}
-
+// ---------------------------------------------------------------- join
 function renderJoin(game) {
-  const names = Object.values(game.players).map(p => p.name);
+  const taken = new Set(Object.values(game.players).map(p => p.icon));
+  let icon = ICONS.filter(i => !taken.has(i))[Math.floor(Math.random() * (ICONS.length - taken.size))];
+  const names = Object.values(game.players);
+  const isHost = !!hostFor(game.code);
   $app.innerHTML = `
     <div class="stack fade-in">
-      <div class="center"><span class="pill">You're invited</span><h1 style="margin-top:10px">${esc(game.name)}</h1>
-        <p class="muted">Rank the top songs of ${game.years[0]}–${game.years.at(-1)} with your friends.</p></div>
+      <div class="center"><span class="pill">${isHost ? "You're the host" : "You're invited"}</span><h1 style="margin-top:10px">${esc(game.name)}</h1>
+        <p class="muted">The top songs of ${game.years[0]}–${game.years.at(-1)}, played together.</p></div>
       <form class="card stack" id="joinf">
+        <div class="center" id="preview">${avatar({ icon }, 'xl')}</div>
         <div><label for="name">Your name</label><input type="text" id="name" maxlength="30" placeholder="What should friends call you?" required autofocus></div>
-        <button class="btn primary block big">Join game</button>
-        ${names.length ? `<p class="small muted">Already playing: ${names.map(esc).join(', ')}.<br>On a new device? Enter the same name to pick up where you left off.</p>` : ''}
+        <div><label>Pick your icon</label>${iconGrid(icon, taken)}</div>
+        <button class="btn primary block big">${isHost ? 'Open the lobby' : 'Join game'}</button>
+        ${names.length ? `<p class="small muted">Already here: ${names.map(p => `${p.icon} ${esc(p.name)}`).join(', ')}.<br>On a new device? Enter the same name to pick up where you left off.</p>` : ''}
       </form>
     </div>`;
+  $app.querySelector('.icon-grid').addEventListener('click', e => {
+    const b = e.target.closest('[data-icon]'); if (!b || b.disabled) return;
+    icon = b.dataset.icon;
+    $app.querySelectorAll('.icon-opt').forEach(x => x.classList.toggle('on', x === b));
+    document.getElementById('preview').innerHTML = avatar({ icon }, 'xl');
+  });
   document.getElementById('joinf').addEventListener('submit', async e => {
     e.preventDefault();
     const name = document.getElementById('name').value;
     try {
-      const r = await api(`/games/${game.code}/players`, { method: 'POST', body: { name } });
+      const r = await api(`/games/${game.code}/players`, { method: 'POST', body: { name, icon, hostToken: hostFor(game.code) || undefined } });
       store.set('sc:player:' + game.code, { playerId: r.playerId, token: r.token, name: name.trim() });
       if (r.rejoined) toast('Welcome back!');
       route();
-    } catch (err) { toast(err.message); }
+    } catch (err) { toast(err.message); if (/icon/i.test(err.message)) route(); }
   });
 }
 
-// ---------------------------------------------------------------- play a year
-async function renderPlay(code, year) {
+// ---------------------------------------------------------------- the live game
+// One screen per phase. The server decides the phase; everyone polls it and follows along.
+async function renderGame(code) {
   const me = meFor(code);
-  if (!me) { location.hash = `#/g/${code}`; return; }
-  let game = await api('/games/' + code);
-  if (!game.players[me.playerId]) { location.hash = `#/g/${code}`; return; }
-  if (!game.years.includes(year)) throw new Error('That year is not part of this game.');
+  const query = () => (me ? `?playerId=${me.playerId}&token=${me.token}` : '');
+  let game = await api(`/games/${code}${query()}`);
+  rememberGame(code, game.name);
+  if (!me || !game.players[me.playerId]) return renderJoin(game);
 
-  const order = seededOrder(`${me.playerId}:${year}`, SONGS[year].map(s => s.rank));
-  const existing = (game.votes[me.playerId] || {})[year];
-  // Steps: 'intro' -> 'board' (songs are revealed and played one by one, and picked on the same screen) -> 'reveal'
-  const st = {
-    step: existing ? 'board' : 'intro',
-    picks: existing ? existing.slice() : [],
-    changing: !!existing,
-    revealed: existing ? order.length : 0,   // how many songs are showing
-    autoplay: false,                          // keep moving to the next song when one ends
-    pop: null,                                // rank of the song that just appeared (for the animation)
+  let offset = Date.now() - game.now;           // our clock minus the server's
+  let view = null, viewKey = null;
+  const ctx = {
+    code, me, hostToken: hostFor(code),
+    get game() { return game; },
+    serverNow: () => Date.now() - offset,
+    async refresh() {
+      const g = await api(`/games/${code}${query()}`);
+      offset = Date.now() - g.now; game = g; show();
+    },
+    async host(action) {
+      try { const g = await api(`/games/${code}/host`, { method: 'POST', body: { hostToken: ctx.hostToken, action } }); offset = Date.now() - g.now; game = g; show(); }
+      catch (err) { toast(err.message); }
+    },
   };
-  const yi = game.years.indexOf(year);
+  ctx.isHost = () => !!ctx.hostToken && game.players[me.playerId]?.isHost;
+  const views = { lobby: LobbyView, picking: PickView, reveal: RevealView, done: DoneView };
+  function show() {
+    if (!game.players[me.playerId]) { store.del('sc:player:' + code); toast('You were removed from this game'); return route(); }
+    const key = `${game.state.phase}:${game.state.yearIndex}`;
+    if (key !== viewKey) {
+      view?.destroy?.();
+      viewKey = key;
+      view = views[game.state.phase](ctx);
+      window.scrollTo(0, 0);
+      view.render();
+    } else view.update?.();
+  }
+  show();
+  let last = JSON.stringify({ ...game, now: 0 });
+  pollTimer = setInterval(async () => {
+    if (document.hidden) return;
+    try {
+      const g = await api(`/games/${code}${query()}`);
+      offset = Date.now() - g.now;
+      const sig = JSON.stringify({ ...g, now: 0 });
+      if (sig !== last) { last = sig; game = g; show(); }
+    } catch { /* keep trying */ }
+  }, POLL_MS);
+  cleanup = () => { view?.destroy?.(); Player.onEnded = null; Player.stop(); };
+}
+
+// ---------------- pregame lobby
+function LobbyView(ctx) {
+  let picking = false; // icon picker open
+  const render = () => {
+    const g = ctx.game, me = ctx.me;
+    const link = `${location.origin}/#/g/${ctx.code}`;
+    const players = Object.entries(g.players).sort((a, b) => a[1].joinedAt - b[1].joinedAt);
+    const mine = g.players[me.playerId];
+    const taken = new Set(players.map(([, p]) => p.icon));
+    $app.innerHTML = `
+      <div class="stack">
+        <div class="center">
+          <span class="pill">Pregame lobby</span>
+          <h1 style="margin-top:10px">${esc(g.name)}</h1>
+          <p class="muted">${g.years[0]}–${g.years.at(-1)} · ${g.years.length} year${g.years.length === 1 ? '' : 's'} · 10 songs each</p>
+        </div>
+        <div class="card stack">
+          <div class="row spread"><h2 style="margin:0">Who's here (${players.length})</h2>
+            <button class="linkbtn small" id="change">${picking ? 'Done' : `Change my icon ${mine.icon}`}</button></div>
+          ${picking ? iconGrid(mine.icon, taken) : ''}
+          <div class="lobby-grid">${players.map(([id, p]) => `
+            <div class="lobby-player ${id === me.playerId ? 'me' : ''}">
+              ${avatar(p, 'lg')}
+              <b>${esc(p.name)}</b>
+              <span class="small muted">${p.isHost ? '👑 Host' : id === me.playerId ? 'You' : '&nbsp;'}</span>
+              ${ctx.isHost() && id !== me.playerId ? `<button class="kick" data-kick="${id}" title="Remove ${esc(p.name)}">✕</button>` : ''}
+            </div>`).join('')}</div>
+        </div>
+        ${ctx.isHost()
+          ? `<button class="btn primary big block" id="start">Everyone's in. Start the game!</button>`
+          : `<div class="callout center">Waiting for the host to start the game<span class="dots-anim"></span></div>`}
+        <div class="card stack">
+          <h2>Invite friends</h2>
+          <div class="center"><div class="small muted">Game code</div><div class="code-big">${ctx.code}</div></div>
+          <div class="share"><input type="text" readonly value="${esc(link)}" id="link"><button class="btn" id="copy">Copy</button></div>
+        </div>
+        <div class="card flat stack small">
+          <b>How it works</b>
+          <div class="muted">Each year, the 10 biggest songs play one by one. Drag 🥇 🥈 🥉 onto your three favorites (5, 3 and 1 points) and
+          🔮 onto the song you think was Billboard's #1 that year. Once everyone locks in, you'll see who picked what.
+          Every correct 🔮 guess is worth a point on the scoreboard.</div>
+        </div>
+        <p class="center small muted">Not ${esc(mine.name)}? <button class="linkbtn" id="switch">Switch player</button></p>
+      </div>`;
+    document.getElementById('change').onclick = () => { picking = !picking; render(); };
+    $app.querySelector('.icon-grid')?.addEventListener('click', async e => {
+      const b = e.target.closest('[data-icon]'); if (!b || b.disabled) return;
+      try { await api(`/games/${ctx.code}/players/${me.playerId}`, { method: 'PATCH', body: { token: me.token, icon: b.dataset.icon } }); picking = false; await ctx.refresh(); }
+      catch (err) { toast(err.message); }
+    });
+    document.getElementById('start')?.addEventListener('click', () => ctx.host('start'));
+    document.getElementById('copy').onclick = async () => {
+      try { await navigator.clipboard.writeText(link); toast('Link copied!'); }
+      catch { document.getElementById('link').select(); toast('Copy the link above'); }
+    };
+    document.getElementById('switch').onclick = () => { store.del('sc:player:' + ctx.code); route(); };
+    $app.querySelectorAll('[data-kick]').forEach(b => b.onclick = () => kick(ctx, b.dataset.kick));
+  };
+  return { render, update: () => { if (document.activeElement?.id !== 'link') render(); } };
+}
+async function kick(ctx, id) {
+  const p = ctx.game.players[id];
+  if (!confirm(`Remove ${p.name} from the game?`)) return;
+  try { await api(`/games/${ctx.code}/players/${id}`, { method: 'DELETE', headers: { 'X-Host-Token': ctx.hostToken } }); await ctx.refresh(); }
+  catch (err) { toast(err.message); }
+}
+
+// Strip of everyone's icons with a ✓ once they've locked in.
+function lockStrip(ctx) {
+  const g = ctx.game;
+  const players = Object.entries(g.players).sort((a, b) => a[1].joinedAt - b[1].joinedAt);
+  return players.map(([id, p]) => `<span class="lock-av ${g.locked.includes(id) ? 'in' : ''}" title="${esc(p.name)}${g.locked.includes(id) ? ' – locked in' : ' – still picking'}">
+    ${avatar(p, 'sm', g.locked.includes(id) ? '✓' : '')}</span>`).join('');
+}
+
+// ---------------- picking a year
+function PickView(ctx) {
+  const g0 = ctx.game, me = ctx.me;
+  const year = g0.state.year, yi = g0.state.yearIndex;
+  const order = seededOrder(`${me.playerId}:${year}`, SONGS[year].map(s => s.rank));
+  const mineVotes = (g0.votes[me.playerId] || {})[year];
+  const st = {
+    picks: mineVotes ? mineVotes.slice() : [null, null, null],
+    predict: (g0.predictions[me.playerId] || {})[year] || null,
+    locked: !!mineVotes,
+    step: mineVotes ? 'board' : Player.unlocked ? 'board' : 'intro',  // after the first year, skip straight to listening
+    revealed: mineVotes ? order.length : Player.unlocked ? 1 : 0,
+    autoplay: !mineVotes && Player.unlocked,
+    pop: null,
+    armed: null,  // token picked up by tapping (tap a song to drop it)
+  };
   const current = () => songOf(year, order[st.revealed - 1]);
   const curKey = () => `${year}-${order[st.revealed - 1]}`;
-
-  const go = step => { st.step = step; st.animate = true; draw(); window.scrollTo(0, 0); };
-  const redraw = () => { const y = window.scrollY; st.animate = false; draw(); window.scrollTo(0, y); };
+  const tokenAt = rank => ({ medal: st.picks.indexOf(rank), predict: st.predict === rank });
+  const complete = () => st.picks.every(Boolean) && !!st.predict;
 
   async function playCurrent() {
     const key = curKey();
     const ok = await Player.play(year, current());
-    // No preview for this one: give it a moment on screen, then keep going.
     if (!ok) setTimeout(() => { if (st.autoplay && curKey() === key) advance(); }, 2500);
   }
   function advance() {
     if (st.revealed < order.length) {
-      st.revealed++;
-      st.autoplay = true;
-      st.pop = order[st.revealed - 1];
+      st.revealed++; st.autoplay = true; st.pop = order[st.revealed - 1];
       redraw();
       document.querySelector(`[data-tile="${st.pop}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       playCurrent();
-    } else {
-      st.autoplay = false;
-      redraw();
-    }
+    } else { st.autoplay = false; redraw(); }
   }
   function showAll() { st.revealed = order.length; st.autoplay = false; st.pop = null; Player.stop(); redraw(); }
-
-  // When the song that's "up" finishes, reveal and play the next one.
   Player.onEnded = key => { if (st.step === 'board' && st.autoplay && key === curKey()) advance(); };
 
+  function place(token, rank) {
+    if (st.locked) return;
+    if (token === 'p') st.predict = rank;
+    else {
+      const t = Number(token), other = st.picks.indexOf(rank);
+      if (other >= 0 && other !== t) st.picks[other] = st.picks[t]; // swap medals
+      st.picks[t] = rank;
+    }
+    st.armed = null;
+  }
+  function unplace(token) { if (token === 'p') st.predict = null; else st.picks[Number(token)] = null; }
+
+  const redraw = () => { const y = window.scrollY; draw(); window.scrollTo(0, y); };
   function draw() {
     if (st.step === 'intro') {
       $app.innerHTML = `
-        <div class="center stack fade-in" style="padding-top:30px">
-          <div class="muted">Year ${yi + 1} of ${game.years.length}</div>
+        <div class="center stack fade-in" style="padding-top:20px">
+          <div class="lock-strip center-strip">${lockStrip(ctx)}</div>
+          <div class="muted">Year ${yi + 1} of ${ctx.game.years.length}</div>
           <div class="year-title">${year}</div>
-          <p class="muted">Ten of the year's biggest songs, shuffled. They'll appear and play one at a time. Pick your top 3 whenever you're ready.</p>
+          <p class="muted">Ten of the year's biggest songs, shuffled. They'll play one at a time. Drag your medals and your 🔮 onto songs whenever you're ready.</p>
           <button class="btn primary big" id="begin">▶ Start listening</button>
           <div><button class="linkbtn" id="skip">I know these. Show them all</button></div>
         </div>`;
-      document.getElementById('begin').onclick = () => { st.revealed = 1; st.autoplay = true; st.pop = order[0]; go('board'); playCurrent(); };
-      document.getElementById('skip').onclick = () => { st.revealed = order.length; go('board'); };
+      document.getElementById('begin').onclick = () => { st.step = 'board'; st.revealed = 1; st.autoplay = true; st.pop = order[0]; draw(); playCurrent(); };
+      document.getElementById('skip').onclick = () => { st.step = 'board'; st.revealed = order.length; draw(); };
       return;
     }
-
-    if (st.step === 'board') {
-      const listening = st.revealed > 0 && (st.revealed < order.length || st.autoplay);
-      const cur = st.revealed ? current() : null;
-      const slot = i => {
-        const r = st.picks[i]; const s = r && songOf(year, r);
-        return `<div class="slot p${i + 1} ${s ? 'filled' : ''}"><span class="medal">${MEDAL[i]}</span>
-          ${s ? `<b>${esc(s.title)}</b><span class="muted">${esc(s.artist)}</span>` : `<span class="muted">${PLACE[i]} · ${Scoring.POINTS[i]} pt${i < 2 ? 's' : ''}</span>`}</div>`;
-      };
-      $app.innerHTML = `
-        <div class="${st.animate ? 'fade-in' : ''}">
-          ${listening ? `
-          <div class="now-playing">
-            ${cur.art ? `<img src="${esc(cur.art)}" alt="">` : `<div class="ph">${esc(cur.title[0])}</div>`}
-            <div style="min-width:0">
-              <div class="np-label">Song ${st.revealed} of ${order.length}</div>
-              <div class="t">${esc(cur.title)}</div><div class="a">${esc(cur.artist)}</div>
+    const listening = st.revealed > 0 && (st.revealed < order.length || st.autoplay);
+    const cur = st.revealed ? current() : null;
+    const tokenEl = (t, where) => `<span class="token ${st.locked ? 'locked' : ''} ${st.armed === String(t) ? 'armed' : ''}" data-token="${t}" role="button" tabindex="0"
+      aria-label="${TOKENS[t].label}${where ? ' on ' + esc(where) : ''}">${TOKENS[t].emoji}</span>`;
+    const trayItem = t => {
+      const rank = t === 'p' ? st.predict : st.picks[t];
+      const s = rank && songOf(year, rank);
+      return `<div class="tray-item ${s ? 'placed' : ''} ${t === 'p' ? 'predict' : 'p' + (Number(t) + 1)}">
+        ${tokenEl(t)}
+        <div class="tray-text"><b>${s ? esc(s.title) : TOKENS[t].label}</b><span>${s ? (t === 'p' ? 'your #1 guess' : TOKENS[t].label + ' · ' + TOKENS[t].sub) : TOKENS[t].sub}</span></div>
+      </div>`;
+    };
+    const missing = Object.entries(ctx.game.players).filter(([id]) => !ctx.game.locked.includes(id) && id !== me.playerId);
+    $app.innerHTML = `
+      <div>
+        ${listening ? `
+        <div class="now-playing">
+          ${cur.art ? `<img src="${esc(cur.art)}" alt="">` : `<div class="ph">${esc(cur.title[0])}</div>`}
+          <div style="min-width:0">
+            <div class="np-label">${year} · Song ${st.revealed} of ${order.length}</div>
+            <div class="t">${esc(cur.title)}</div><div class="a">${esc(cur.artist)}</div>
+          </div>
+          <div class="np-controls">
+            <button class="np-play" data-play="${curKey()}" aria-label="Play preview">▶</button>
+            <button class="btn primary np-next" id="next">${st.revealed < order.length ? 'Next ›' : 'Done'}</button>
+          </div>
+          <div class="progress np-progress"><i data-progress="${curKey()}"></i></div>
+        </div>` : ''}
+        <div class="row spread" style="margin-bottom:6px">
+          <h2 style="margin:0">${year}</h2>
+          <div class="lock-strip">${lockStrip(ctx)}</div>
+        </div>
+        ${st.locked ? `
+          <div class="callout win wait-banner">
+            <b>Locked in ✓</b> ${missing.length ? `Waiting for ${missing.map(([, p]) => `${p.icon} ${esc(p.name)}`).join(', ')}…` : 'Revealing…'}
+            <div class="row" style="margin-top:8px">
+              <button class="btn ghost" id="unlock">Change my picks</button>
+              ${ctx.isHost() && missing.length ? `<button class="btn ghost" id="force">Reveal now</button>` : ''}
             </div>
-            <div class="np-controls">
-              <button class="np-play" data-play="${curKey()}" aria-label="Play preview">▶</button>
-              <button class="btn primary np-next" id="next">${st.revealed < order.length ? 'Next ›' : 'Done'}</button>
+          </div>` : `<p class="muted small" style="margin:0 0 8px">${st.armed ? `Now tap a song to put your ${TOKENS[st.armed].emoji} on it.` : 'Drag each medal and your 🔮 onto a song (or tap one, then tap a song).'}</p>`}
+        <div class="tray">${[0, 1, 2, 'p'].map(trayItem).join('')}</div>
+        <div class="tiles ${st.locked ? 'is-locked' : ''}">${order.map((r, i) => {
+          if (i >= st.revealed) return `<div class="tile locked" aria-hidden="true"><div class="ph">${i + 1}</div><div class="meta"><div class="tw"><span class="t">Song ${i + 1}</span></div><div class="a">Up next</div></div></div>`;
+          const s = songOf(year, r); const { medal, predict } = tokenAt(r);
+          const now = listening && i === st.revealed - 1;
+          return `<div class="tile ${medal >= 0 ? 'p' + (medal + 1) : ''} ${predict ? 'predicted' : ''} ${now ? 'now' : ''} ${st.pop === r ? 'pop' : ''} ${st.armed ? 'armable' : ''}" data-tile="${r}">
+            ${s.art ? `<img src="${esc(s.art)}" alt="" loading="lazy" draggable="false">` : `<div class="ph">${esc(s.title[0])}</div>`}
+            ${medal >= 0 ? `<span class="tile-token medal">${tokenEl(medal, s.title)}</span>` : ''}
+            ${predict ? `<span class="tile-token pred">${tokenEl('p', s.title)}</span>` : ''}
+            ${now ? '<span class="now-tag" title="Now playing">♪</span>' : ''}
+            <div class="meta">
+              <div class="tw"><button class="tile-play" data-play="${year}-${r}" aria-label="Play preview">▶</button><span class="t">${esc(s.title)}</span></div>
+              <div class="a">${esc(s.artist)}</div>
             </div>
-            <div class="progress np-progress"><i data-progress="${curKey()}"></i></div>
-          </div>` : ''}
-          <div class="row spread" style="margin-bottom:8px">
-            <h2 style="margin:0">Your top 3 of ${year}</h2>
-            ${st.revealed < order.length ? `<button class="linkbtn small" id="showall">Show all songs</button>` : ''}
-          </div>
-          <p class="muted small">Tap a song to pick it: first tap is 1st place. Tap a picked song to remove it. ${listening ? 'Each song plays in turn.' : 'Tap ▶ on any song to hear it again.'}</p>
-          <div class="slots">${[0, 1, 2].map(slot).join('')}</div>
-          <div class="tiles">${order.map((r, i) => {
-            if (i >= st.revealed) return `<div class="tile locked" aria-hidden="true"><div class="ph">${i + 1}</div><div class="meta"><div class="tw"><span class="t">Song ${i + 1}</span></div><div class="a">Up next</div></div></div>`;
-            const s = songOf(year, r); const p = st.picks.indexOf(r);
-            const now = listening && i === st.revealed - 1;
-            return `<div class="tile ${p >= 0 ? 'p' + (p + 1) : ''} ${now ? 'now' : ''} ${st.pop === r ? 'pop' : ''}" data-pick="${r}" data-tile="${r}" role="button" tabindex="0" aria-pressed="${p >= 0}">
-              ${s.art ? `<img src="${esc(s.art)}" alt="" loading="lazy">` : `<div class="ph">${esc(s.title[0])}</div>`}
-              ${p >= 0 ? `<span class="badge">${p + 1}</span>` : ''}
-              ${now ? '<span class="now-tag" title="Now playing">♪</span>' : ''}
-              <div class="meta">
-                <div class="tw"><button class="tile-play" data-play="${year}-${r}" aria-label="Play preview">▶</button><span class="t">${esc(s.title)}</span></div>
-                <div class="a">${esc(s.artist)}</div>
-              </div>
-            </div>`;
-          }).join('')}</div>
-          <div class="sticky-submit">
-            <button class="btn primary big block" id="submit" ${st.picks.length === 3 ? '' : 'disabled'}>
-              ${st.picks.length === 3 ? (st.changing ? 'Save my new picks' : 'Lock in my picks') : `Pick ${3 - st.picks.length} more`}
-            </button>
-          </div>
-        </div>`;
-      st.pop = null;
-      Player.paint();
-      $app.querySelectorAll('[data-pick]').forEach(t => {
-        const act = e => {
-          if (e.target.closest('[data-play]')) return;  // ▶ only plays; it never picks
-          const r = Number(t.dataset.pick); const i = st.picks.indexOf(r);
-          if (i >= 0) st.picks.splice(i, 1);
-          else if (st.picks.length < 3) st.picks.push(r);
-          else return toast('You already have 3. Tap one to remove it.');
-          redraw();
-        };
-        t.addEventListener('click', act);
-        t.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && !e.target.closest('[data-play]')) { e.preventDefault(); act(e); } });
-      });
-      document.getElementById('next')?.addEventListener('click', advance);
-      document.getElementById('showall')?.addEventListener('click', showAll);
-      document.getElementById('submit').onclick = async e => {
-        e.currentTarget.disabled = true;
-        try {
-          await api(`/games/${code}/votes/${year}`, { method: 'PUT', body: { playerId: me.playerId, token: me.token, picks: st.picks } });
-          st.autoplay = false;
-          Player.stop();
-          game = await api('/games/' + code);
-          go('reveal');
-        } catch (err) { toast(err.message); e.currentTarget.disabled = false; }
-      };
-      return;
-    }
-
-    if (st.step === 'reveal') {
-      const res = Scoring.yearResults(game, SONGS, year);
-      const myVotes = game.votes[me.playerId] || {};
-      const next = game.years.slice(yi + 1).find(y => !myVotes[y]) || game.years.find(y => !myVotes[y]);
-      const nextUrl = next ? `#/g/${code}/play/${next}` : `#/g/${code}/results`;
-      const hit = st.picks[0] === 1;
-      const top = res.rows.filter(r => r.points > 0).slice(0, 3);
-      const chart = SONGS[year].slice().sort((x, y) => x.rank - y.rank);
-      $app.innerHTML = `
-        <div class="stack reveal-stack fade-in">
-          <div class="row spread reveal-head"><div class="year-title">${year}</div><span class="muted">Picks saved ✓</span></div>
-          <div class="next-bar">
-            <div class="row" style="flex-wrap:nowrap">
-              <div class="nb-text" id="nbtext">${next ? `Next: <b>${next}</b> in <span id="secs">${REVEAL_SECONDS}</span>s` : 'That was your last year!'}</div>
-              ${next ? '<button class="btn ghost" id="stay">Stay</button>' : ''}
-              <a class="btn primary" href="${nextUrl}">${next ? 'Go now →' : 'See results →'}</a>
-            </div>
-            ${next ? '<div class="progress"><i id="nbprog" style="width:100%"></i></div>' : ''}
-          </div>
-          <div class="card chart-card">
-            <h3 style="margin:0">Billboard's top 10 of ${year}</h3>
-            <p class="small ${hit ? 'match-yes' : 'muted'}" style="margin:2px 0 10px">${hit
-              ? `🎯 Chart match! Your #1 was Billboard's #1 too.`
-              : `Your #1 was Billboard's #${st.picks[0]}.`}</p>
-            <div class="list chart-list">${chart.map(s => {
-              const place = st.picks.indexOf(s.rank);
-              return `<div class="srow chart-row ${place >= 0 ? 'mine p' + place : ''}" style="animation-delay:${(chart.length - s.rank) * 120}ms">
-                <div class="gr">${s.rank}</div>
-                <div class="thumb-wrap">${art(s, 'thumb')}${miniPlay(year, s.rank)}</div>
-                <div class="ln"><span class="t">${esc(s.title)}</span> <span class="a">${esc(s.artist)}</span></div>
-                <div class="your-pick">${place >= 0 ? `${MEDAL[place]}<span>Your ${PLACE[place]}</span>` : ''}</div>
-              </div>`;
-            }).join('')}</div>
-          </div>
-          <div class="card stack">
-            <div class="row spread"><h3 style="margin:0">The group so far</h3><span class="small muted">${res.voterCount} voter${res.voterCount === 1 ? '' : 's'}</span></div>
-            <div class="list">${top.map(r => `
-              <div class="srow r${r.groupRank}"><div class="gr">${r.groupRank}</div>
-                <div class="thumb-wrap">${art(r, 'thumb')}${miniPlay(year, r.rank)}</div>
-                <div style="min-width:0"><div class="t">${esc(r.title)}</div><div class="a">${esc(r.artist)}</div></div>
-                <div class="pts"><b>${r.points}</b><span>pts</span></div></div>`).join('')}
-            </div>
-            <a class="linkbtn small" href="#/g/${code}/results/${year}">Full ${year} results →</a>
-          </div>
-          <a class="btn ghost block" href="#/g/${code}">Back to lobby</a>
-        </div>`;
-      Player.paint();
-      if (!next) return;
-      // Count down, then move on to the next year. Paused while the tab is hidden,
-      // and stopped for good if they tap Stay or play one of the songs.
-      let left = REVEAL_SECONDS * 1000;
-      const stop = () => {
-        clearInterval(st.timer); st.timer = null;
-        const t = document.getElementById('nbtext'); if (t) t.innerHTML = `Next: <b>${next}</b>, whenever you're ready`;
-        document.getElementById('stay')?.remove();
-        document.querySelector('.next-bar .progress')?.remove();
-      };
-      st.timer = setInterval(() => {
-        if (document.hidden) return;
-        left -= 100;
-        const secs = document.getElementById('secs'); if (secs) secs.textContent = Math.max(0, Math.ceil(left / 1000));
-        const bar = document.getElementById('nbprog'); if (bar) bar.style.width = Math.max(0, left / (REVEAL_SECONDS * 10)) + '%';
-        if (left <= 0) { clearInterval(st.timer); st.timer = null; location.hash = nextUrl; }
-      }, 100);
-      document.getElementById('stay').onclick = stop;
-      $app.firstElementChild.addEventListener('click', e => { if (e.target.closest('[data-play]') && st.timer) stop(); });
-    }
+          </div>`;
+        }).join('')}</div>
+        ${st.revealed < order.length ? `<p class="center"><button class="linkbtn small" id="showall">Show all songs</button></p>` : ''}
+        ${st.locked ? '' : `<div class="lock-row">
+          <button class="btn primary big block" id="lock" ${complete() ? '' : 'disabled'}>
+            ${complete() ? 'Lock in my picks' : `Place ${[0, 1, 2].filter(t => !st.picks[t]).map(t => TOKENS[t].emoji).join('')}${st.predict ? '' : '🔮'} to lock in`}
+          </button></div>`}
+      </div>`;
+    st.pop = null;
+    Player.paint();
+    document.getElementById('next')?.addEventListener('click', advance);
+    document.getElementById('showall')?.addEventListener('click', showAll);
+    document.getElementById('lock')?.addEventListener('click', lockIn);
+    document.getElementById('unlock')?.addEventListener('click', unlock);
+    document.getElementById('force')?.addEventListener('click', () => { if (confirm('Reveal now, without waiting for everyone?')) ctx.host('reveal'); });
   }
 
-  const onKey = e => {
-    if (st.step !== 'board' || !st.revealed || e.target.matches('input, textarea')) return;
-    if (e.key === 'ArrowRight') { e.preventDefault(); advance(); }
-    if (e.key === ' ' && !e.target.closest('[data-pick]')) { e.preventDefault(); Player.toggle(year, current()); }
-  };
+  async function lockIn(e) {
+    e.currentTarget.disabled = true;
+    try {
+      await api(`/games/${ctx.code}/votes/${year}`, { method: 'PUT', body: { playerId: me.playerId, token: me.token, picks: st.picks, predict: st.predict } });
+      st.locked = true; st.armed = null; redraw(); await ctx.refresh();
+    } catch (err) { toast(err.message); e.currentTarget.disabled = false; }
+  }
+  async function unlock() {
+    try { await api(`/games/${ctx.code}/votes/${year}`, { method: 'DELETE', body: { playerId: me.playerId, token: me.token } }); st.locked = false; redraw(); await ctx.refresh(); }
+    catch (err) { toast(err.message); }
+  }
+
+  // ---- drag and drop (pointer events work for mouse, touch and pen)
+  let drag = null;
+  const tileAt = (x, y) => document.elementFromPoint(x, y)?.closest('[data-tile]');
+  function onDown(e) {
+    const t = e.target.closest('[data-token]');
+    if (!t || st.locked || st.step !== 'board' || e.button > 0) return;
+    e.preventDefault();
+    drag = { token: t.dataset.token, x: e.clientX, y: e.clientY, moved: false, ghost: null, over: null, from: t.closest('[data-tile]') };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onCancel);
+  }
+  function onMove(e) {
+    if (!drag) return;
+    if (!drag.moved) {
+      if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 6) return;
+      drag.moved = true;
+      drag.ghost = document.createElement('div');
+      drag.ghost.className = 'drag-ghost';
+      drag.ghost.textContent = TOKENS[drag.token].emoji;
+      document.body.appendChild(drag.ghost);
+      document.body.classList.add('dragging');
+    }
+    drag.ghost.style.transform = `translate(${e.clientX}px, ${e.clientY - 28}px) translate(-50%, -50%)`;
+    const over = tileAt(e.clientX, e.clientY - 28);
+    if (over !== drag.over) { drag.over?.classList.remove('drop-over'); over?.classList.add('drop-over'); drag.over = over; }
+  }
+  function endDrag() {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    window.removeEventListener('pointercancel', onCancel);
+    drag?.ghost?.remove(); drag?.over?.classList.remove('drop-over');
+    document.body.classList.remove('dragging');
+  }
+  function onUp(e) {
+    if (!drag) return;
+    const d = drag; endDrag(); drag = null;
+    if (!d.moved) { st.armed = st.armed === d.token ? null : d.token; return redraw(); } // tap: pick it up
+    const tile = tileAt(e.clientX, e.clientY - 28);
+    if (tile) place(d.token, Number(tile.dataset.tile));
+    else if (d.from) unplace(d.token); // dragged off a song: take it back
+    redraw();
+  }
+  function onCancel() { endDrag(); drag = null; }
+  function onClick(e) {
+    if (e.target.closest('[data-play], [data-token]')) return;
+    const tile = e.target.closest('[data-tile]');
+    if (!tile || st.locked) return;
+    if (st.armed) { place(st.armed, Number(tile.dataset.tile)); redraw(); }
+    else toast('Drag a medal or your 🔮 onto a song');
+  }
+  function onKey(e) {
+    if (st.step !== 'board' || e.target.matches('input, textarea')) return;
+    const t = e.target.closest('[data-token]');
+    if (t && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); st.armed = st.armed === t.dataset.token ? null : t.dataset.token; return redraw(); }
+    if (e.key === 'ArrowRight' && st.revealed) { e.preventDefault(); advance(); }
+  }
+  $app.addEventListener('pointerdown', onDown);
+  $app.addEventListener('click', onClick);
   document.addEventListener('keydown', onKey);
-  cleanup = () => { document.removeEventListener('keydown', onKey); clearInterval(st.timer); Player.onEnded = null; Player.stop(); };
-  draw();
+
+  return {
+    render() {
+      // From the second year on the browser already allows sound, so start listening straight away.
+      if (st.step === 'board' && st.autoplay && st.revealed === 1) { st.pop = order[0]; draw(); playCurrent(); }
+      else draw();
+    },
+    update() {
+      // Only the "who's locked in" bits change while picking; never redraw mid-drag.
+      if (drag) return;
+      if (st.step === 'intro') { const s = $app.querySelector('.lock-strip'); if (s) s.innerHTML = lockStrip(ctx); return; }
+      redraw();
+    },
+    destroy() {
+      endDrag();
+      $app.removeEventListener('pointerdown', onDown);
+      $app.removeEventListener('click', onClick);
+      document.removeEventListener('keydown', onKey);
+      Player.onEnded = null; Player.stop();
+    },
+  };
+}
+
+// ---------------- reveal: who picked what, Billboard's real top 10, the 🔮 scoreboard
+function RevealView(ctx) {
+  let timer = null;
+  const render = () => {
+    const g = ctx.game, year = g.state.year;
+    const res = Scoring.yearResults(g, SONGS, year);
+    const sum = Scoring.summary(g, SONGS);
+    const chart = res.rows.slice().sort((a, b) => a.rank - b.rank);
+    const last = g.state.yearIndex === g.years.length - 1;
+    const players = g.players;
+    const gotIt = new Set(res.rows.find(r => r.rank === 1).predictors);
+    $app.innerHTML = `
+      <div class="stack reveal-stack fade-in">
+        <div class="row spread reveal-head"><div class="year-title">${year}</div><span class="muted">Year ${g.state.yearIndex + 1} of ${g.years.length}</span></div>
+        <div class="next-bar" id="nextbar"></div>
+        ${res.winners.length ? `<div class="callout compact ${res.matchesBillboard ? 'win' : ''}">Group favorite: <b>${res.winners.map(w => esc(w.title)).join(' / ')}</b> (${res.winners[0].points} pts)${res.matchesBillboard ? '. Billboard agrees! 🎯' : ''}</div>` : ''}
+        <div class="card chart-card">
+          <h3 style="margin:0 0 8px">Billboard's top 10 of ${year}</h3>
+          <div class="list chart-list">${chart.map(s => `
+            <div class="srow chart-row reveal-row ${s.rank === 1 ? 'top' : ''}" style="animation-delay:${(chart.length - s.rank) * 110}ms">
+              <div class="gr">${s.rank}</div>
+              <div class="thumb-wrap">${art(s, 'thumb')}${miniPlay(year, s.rank)}</div>
+              <div class="ln-wrap">
+                <div class="ln"><span class="t">${esc(s.title)}</span> <span class="a">${esc(s.artist)}</span></div>
+                ${s.voters.length || s.predictors.length ? `<div class="pickers">${s.voters.map(v => avatar(players[v.playerId], 'sm', MEDAL[v.place])).join('')}${s.predictors.map(id => avatar(players[id], 'sm', '🔮')).join('')}</div>` : ''}
+              </div>
+              <div class="pts-mini">${s.points ? `${s.points}<span>pts</span>` : ''}</div>
+            </div>`).join('')}</div>
+        </div>
+        <div class="card stack">
+          <h3 style="margin:0">🔮 #1 guess scoreboard</h3>
+          <div class="list">${sum.leaderboard.map(p => `
+            <div class="score-row ${gotIt.has(p.playerId) ? 'got' : ''}">
+              <span class="place">${p.place}</span>${avatar(players[p.playerId], 'sm')}<span class="nm">${esc(p.name)}</span>
+              ${gotIt.has(p.playerId) ? '<span class="plus">+1</span>' : ''}
+              <b>${p.predictCorrect}</b>
+            </div>`).join('')}</div>
+        </div>
+        ${ctx.isHost() ? `<button class="linkbtn small center" id="end">End the game now</button>` : ''}
+      </div>`;
+    Player.paint();
+    paintBar(last);
+    document.getElementById('end')?.addEventListener('click', () => { if (confirm('End the game for everyone?')) ctx.host('end'); });
+  };
+  function paintBar(last = ctx.game.state.yearIndex === ctx.game.years.length - 1) {
+    const bar = document.getElementById('nextbar'); if (!bar) return;
+    const ends = ctx.game.state.revealEndsAt;
+    const what = last ? 'Final scores' : `Next: <b>${ctx.game.years[ctx.game.state.yearIndex + 1]}</b>`;
+    bar.innerHTML = `
+      <div class="row" style="flex-wrap:nowrap">
+        <div class="nb-text">${ends ? `${what} in <span id="secs"></span>s` : `${what} · paused by the host`}</div>
+        ${ctx.isHost() && ends ? '<button class="btn ghost" id="pause">Pause</button>' : ''}
+        ${ctx.isHost() ? `<button class="btn primary" id="go">${last ? 'Finish →' : 'Next year →'}</button>` : ''}
+      </div>
+      ${ends ? '<div class="progress"><i id="nbprog"></i></div>' : ''}`;
+    document.getElementById('pause')?.addEventListener('click', () => ctx.host('pause'));
+    document.getElementById('go')?.addEventListener('click', () => ctx.host('next'));
+    clearInterval(timer);
+    if (ends) {
+      const total = Math.max(1, ends - ctx.serverNow());
+      const tickBar = () => {
+        const left = Math.max(0, ends - ctx.serverNow());
+        const s = document.getElementById('secs'); if (s) s.textContent = Math.ceil(left / 1000);
+        const p = document.getElementById('nbprog'); if (p) p.style.width = (left / total) * 100 + '%';
+        if (left <= 0) { clearInterval(timer); ctx.refresh().catch(() => {}); }
+      };
+      tickBar(); timer = setInterval(tickBar, 200);
+    }
+  }
+  let lastEnds = ctx.game.state.revealEndsAt;
+  return {
+    render,
+    update() { if (ctx.game.state.revealEndsAt !== lastEnds) { lastEnds = ctx.game.state.revealEndsAt; paintBar(); } },
+    destroy() { clearInterval(timer); Player.stop(); },
+  };
+}
+
+// ---------------- game over
+function DoneView(ctx) {
+  return {
+    render() {
+      const g = ctx.game;
+      const sum = Scoring.summary(g, SONGS);
+      const champs = sum.leaderboard.filter(p => p.place === 1 && p.predictCorrect > 0);
+      $app.innerHTML = `
+        <div class="stack fade-in">
+          <div class="center"><span class="pill">Game over</span><h1 style="margin-top:10px">${esc(g.name)}</h1></div>
+          ${champs.length ? `<div class="card center stack champ">
+            <div class="champ-avs">${champs.map(p => avatar(g.players[p.playerId], 'xl')).join('')}</div>
+            <h2 style="margin:0">${champs.map(p => esc(p.name)).join(' & ')}</h2>
+            <p class="muted" style="margin:0">${champs.length > 1 ? 'tie for' : 'wins'} the 🔮 #1 guess crown with ${champs[0].predictCorrect} correct!</p>
+          </div>` : ''}
+          <div class="card stack">
+            <h3 style="margin:0">🔮 Final scoreboard</h3>
+            <div class="list">${sum.leaderboard.map(p => `
+              <div class="score-row"><span class="place">${p.place}</span>${avatar(g.players[p.playerId], 'sm')}<span class="nm">${esc(p.name)}</span>
+                <span class="small muted">${p.predictCorrect}/${p.predictTotal}</span><b>${p.predictCorrect}</b></div>`).join('')}</div>
+          </div>
+          ${sum.hallOfFame.length ? `<div class="card stack"><h3 style="margin:0">🏆 The group's most-loved songs</h3><div class="list">${sum.hallOfFame.slice(0, 5).map(s => `
+            <div class="srow"><div class="gr" style="font-size:.85rem">${s.year}</div><div class="thumb-wrap">${art(s, 'thumb')}${miniPlay(s.year, s.rank)}</div>
+              <div style="min-width:0"><div class="t">${esc(s.title)}</div><div class="a">${esc(s.artist)}</div></div><div class="pts"><b>${s.points}</b><span>pts</span></div></div>`).join('')}</div></div>` : ''}
+          <a class="btn primary big block" href="#/g/${ctx.code}/results">See every year's results →</a>
+          <a class="btn ghost block" href="#/">Home</a>
+        </div>`;
+      Player.paint();
+    },
+    destroy() { Player.stop(); },
+  };
 }
 
 // ---------------------------------------------------------------- results
 async function renderResults(code, tab) {
-  let game = await api('/games/' + code);
-  rememberGame(code, game.name);
   const me = meFor(code);
+  const query = me ? `?playerId=${me.playerId}&token=${me.token}` : '';
+  let game = await api(`/games/${code}${query}`);
+  rememberGame(code, game.name);
   const year = Number(tab);
-  const nameOf = id => game.players[id]?.name || '?';
+  const P = id => game.players[id];
 
   const paint = () => {
+    // Years still being played (or not reached yet) have no results to show.
+    const done = y => game.state.phase === 'done' || game.years.indexOf(y) < game.state.yearIndex || (game.state.phase === 'reveal' && y === game.state.year);
     const sum = Scoring.summary(game, SONGS);
     const tabs = `<nav class="tabs">
       <a href="#/g/${code}/results" class="${tab === 'years' || year ? 'on' : ''}">Years</a>
-      <a href="#/g/${code}/results/friends" class="${tab === 'friends' ? 'on' : ''}">Friends</a>
+      <a href="#/g/${code}/results/players" class="${tab === 'players' ? 'on' : ''}">Players</a>
       <a href="#/g/${code}/results/fame" class="${tab === 'fame' ? 'on' : ''}">Hall of Fame</a></nav>`;
     let body = '';
 
@@ -578,15 +786,14 @@ async function renderResults(code, tab) {
       const res = Scoring.yearResults(game, SONGS, year);
       const i = game.years.indexOf(year);
       const prev = game.years[i - 1], next = game.years[i + 1];
-      const iVoted = me && (game.votes[me.playerId] || {})[year];
       body = `
         <div class="row spread" style="margin-bottom:10px">
           ${prev ? `<a class="btn ghost" href="#/g/${code}/results/${prev}">← ${prev}</a>` : '<span></span>'}
           <div class="year-title" style="font-size:2.6rem">${year}</div>
           ${next ? `<a class="btn ghost" href="#/g/${code}/results/${next}">${next} →</a>` : '<span></span>'}
         </div>
-        <p class="center muted small">${res.voterCount} voter${res.voterCount === 1 ? '' : 's'} · 5 pts for 1st, 3 for 2nd, 1 for 3rd
-          ${me && !iVoted ? ` · <a href="#/g/${code}/play/${year}">Cast your vote</a>` : ''}</p>
+        ${!done(year) ? '<p class="center muted">This year hasn\'t been played yet.</p>' : `
+        <p class="center muted small">${res.voterCount} voter${res.voterCount === 1 ? '' : 's'} · 5 pts for 1st, 3 for 2nd, 1 for 3rd · 🔮 = #1 guess</p>
         ${res.voterCount ? `<div class="callout ${res.matchesBillboard ? 'win' : ''}" style="margin-bottom:12px">${
           res.matchesBillboard ? `🎯 The group agrees with Billboard: <b>${esc(res.billboardNo1.title)}</b> is #1.`
           : `Group #1: <b>${res.winners.map(w => esc(w.title)).join(' / ')}</b>. Billboard #1: <b>${esc(res.billboardNo1.title)}</b> (group rank ${res.billboardNo1.points ? '#' + res.billboardNo1.groupRank : 'no votes'}).`}</div>` : ''}
@@ -598,22 +805,24 @@ async function renderResults(code, tab) {
             <div class="thumb-wrap">${art(r, 'thumb')}${miniPlay(year, r.rank)}</div>
             <div style="min-width:0"><div class="t">${esc(r.title)}</div><div class="a">${esc(r.artist)}
               ${paint.byBB ? (r.points ? `<span class="bb">Group #${r.groupRank}</span>` : '') : `<span class="bb ${r.rank === 1 ? 'one' : ''}">Billboard #${r.rank}</span>`}</div>
-              ${r.voters.length ? `<div class="voters">${r.voters.map(v => `<span class="vchip p${v.place}">${MEDAL[v.place]} ${esc(nameOf(v.playerId))}</span>`).join('')}</div>` : ''}
+              ${r.voters.length || r.predictors.length ? `<div class="voters">${r.voters.map(v => `<span class="vchip p${v.place}">${MEDAL[v.place]} ${P(v.playerId)?.icon || ''} ${esc(P(v.playerId)?.name)}</span>`).join('')}${
+                r.predictors.map(id => `<span class="vchip pred">🔮 ${P(id)?.icon || ''} ${esc(P(id)?.name)}</span>`).join('')}</div>` : ''}
             </div>
             <div class="pts"><b>${r.points}</b><span>${r.medals.map((m, k) => m ? `${m}×${MEDAL[k]}` : '').filter(Boolean).join(' ') || 'pts'}</span></div>
-          </div>`).join('')}</div>`;
-    } else if (tab === 'friends') {
-      body = `<div class="list">${sum.players.map(p => `
+          </div>`).join('')}</div>`}`;
+    } else if (tab === 'players') {
+      body = `<div class="list">${sum.leaderboard.map(p => `
         <div class="pcard">
-          <div class="row">${avatar(p.name)}<b style="font-size:1.1rem">${esc(p.name)}</b><span class="small muted">${p.yearsVoted} of ${game.years.length} years voted</span></div>
+          <div class="row">${avatar(P(p.playerId))}<b style="font-size:1.1rem">${esc(p.name)}</b><span class="small muted">${p.yearsVoted} year${p.yearsVoted === 1 ? '' : 's'} played</span></div>
           ${p.yearsVoted ? `<div class="grid">
-            <div><b>${p.chartMatch}</b><span>🎯 Times your #1 = Billboard #1</span></div>
-            <div><b>${p.groupSync}</b><span>🤝 Times your #1 = group #1</span></div>
-            <div><b>${p.avgFirstPickRank.toFixed(1)}</b><span>📻 Avg Billboard rank of your #1 picks (lower = more mainstream)</span></div>
-            <div><b>${p.twin ? Math.round(p.twin.score * 100) + '%' : '–'}</b><span>👯 Taste twin${p.twin ? ': ' + esc(nameOf(p.twin.playerId)) : ''}</span></div>
+            <div><b>${p.predictCorrect}/${p.predictTotal}</b><span>🔮 Correct #1 guesses</span></div>
+            <div><b>${p.chartMatch}</b><span>🎯 Times your 🥇 was Billboard's #1</span></div>
+            <div><b>${p.groupSync}</b><span>🤝 Times your 🥇 = the group's #1</span></div>
+            <div><b>${p.avgFirstPickRank.toFixed(1)}</b><span>📻 Avg Billboard rank of your 🥇 picks (lower = more mainstream)</span></div>
+            <div><b>${p.twin ? Math.round(p.twin.score * 100) + '%' : '–'}</b><span>👯 Taste twin${p.twin ? ': ' + (P(p.twin.playerId)?.icon || '') + ' ' + esc(P(p.twin.playerId)?.name) : ''}</span></div>
           </div>` : ''}
         </div>`).join('') || '<p class="muted">No players yet.</p>'}</div>
-        <p class="small muted" style="margin-top:12px">Taste twin = the friend whose picks overlap most with yours (identical top 3s in the same order = 100%).</p>`;
+        <p class="small muted" style="margin-top:12px">Taste twin = the friend whose medals overlap most with yours (identical top 3s in the same order = 100%).</p>`;
     } else if (tab === 'fame') {
       const songRow = (s, extra) => `<div class="srow"><div class="gr" style="font-size:.85rem">${s.year}</div>
         <div class="thumb-wrap">${art(s, 'thumb')}${miniPlay(s.year, s.rank)}</div>
@@ -628,12 +837,12 @@ async function renderResults(code, tab) {
     } else {
       body = `
         <div class="stats" style="margin-bottom:14px">
-          <div class="stat"><div class="n">${sum.voted.length}<span class="muted" style="font-size:1rem">/${game.years.length}</span></div><div class="l">Years with votes</div></div>
-          <div class="stat"><div class="n">${sum.voted.length ? Math.round(sum.matches / sum.voted.length * 100) : 0}%</div><div class="l">Group #1 = Billboard #1 (${sum.matches} yr${sum.matches === 1 ? "" : "s"})</div></div>
+          <div class="stat"><div class="n">${sum.voted.length}<span class="muted" style="font-size:1rem">/${game.years.length}</span></div><div class="l">Years played</div></div>
+          <div class="stat"><div class="n">${sum.voted.length ? Math.round(sum.matches / sum.voted.length * 100) : 0}%</div><div class="l">Group #1 = Billboard #1 (${sum.matches} yr${sum.matches === 1 ? '' : 's'})</div></div>
           <div class="stat"><div class="n">${sum.voted.length ? Math.round(sum.top3 / sum.voted.length * 100) : 0}%</div><div class="l">Billboard #1 made the group's top 3</div></div>
         </div>
         <div class="list">${sum.years.map(y => {
-          if (!y.voterCount) return `<a class="yrow empty" href="#/g/${code}/results/${y.year}"><div class="y">${y.year}</div><div class="thumb"></div><div class="s">No votes yet</div><span class="muted">›</span></a>`;
+          if (!y.voterCount || !done(y.year)) return `<a class="yrow empty" href="#/g/${code}/results/${y.year}"><div class="y">${y.year}</div><div class="thumb"></div><div class="s">Not played yet</div><span class="muted">›</span></a>`;
           const w = y.winners[0];
           return `<a class="yrow" href="#/g/${code}/results/${y.year}"><div class="y">${y.year}</div>${art(w, 'thumb')}
             <div style="min-width:0"><div class="t">${esc(y.winners.map(x => x.title).join(' / '))}</div>
@@ -652,7 +861,7 @@ async function renderResults(code, tab) {
   cleanup = () => Player.stop();
   pollTimer = setInterval(async () => {
     if (document.hidden) return;
-    try { const g = await api('/games/' + code); if (JSON.stringify(g) !== JSON.stringify(game)) { game = g; paint(); } } catch { /* ignore */ }
+    try { const g = await api(`/games/${code}${query}`); if (JSON.stringify({ ...g, now: 0 }) !== JSON.stringify({ ...game, now: 0 })) { game = g; paint(); } } catch { /* ignore */ }
   }, 5000);
 }
 

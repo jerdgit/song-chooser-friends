@@ -5,10 +5,13 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
   const POINTS = [5, 3, 1]; // 1st, 2nd, 3rd
+  // Goofy player icons. Each player in a game gets a different one.
+  const ICONS = ['🤡', '🥸', '🤪', '🤠', '🥴', '🙃', '👽', '🤖', '👻', '🦑', '🦆', '🐸', '🦄', '🦖', '🐙', '🦥',
+    '🐌', '🦩', '🐔', '🦝', '🐐', '🦦', '🐷', '🐵', '🦀', '🥔', '🌮', '🍕', '🧀', '🍌', '🥑', '🌭'];
 
   // Results for one year: one row per song, sorted by group ranking.
   function yearResults(game, songs, year) {
-    const rows = songs[year].map(s => ({ ...s, points: 0, medals: [0, 0, 0], voters: [] }));
+    const rows = songs[year].map(s => ({ ...s, points: 0, medals: [0, 0, 0], voters: [], predictors: [] }));
     const byRank = Object.fromEntries(rows.map(r => [r.rank, r]));
     let voterCount = 0;
     for (const [playerId, votes] of Object.entries(game.votes)) {
@@ -22,6 +25,10 @@
         row.medals[place]++;
         row.voters.push({ playerId, place });
       });
+    }
+    for (const [playerId, preds] of Object.entries(game.predictions || {})) {
+      const rank = preds[year];
+      if (rank && byRank[rank] && game.players[playerId]) byRank[rank].predictors.push(playerId);
     }
     const cmp = (a, b) => b.points - a.points || b.medals[0] - a.medals[0] || b.medals[1] - a.medals[1];
     rows.sort((a, b) => cmp(a, b) || a.rank - b.rank);
@@ -67,6 +74,10 @@
         firstRankSum += picks[0];
         top3Hits += picks.filter(r => r <= 3).length;
       }
+      // #1 prediction game: 1 point for each year you guessed Billboard's #1.
+      const preds = (game.predictions || {})[id] || {};
+      const predYears = Object.keys(preds).filter(y => game.years.includes(Number(y)));
+      const predictCorrect = predYears.filter(y => preds[y] === 1).length;
       let twin = null;
       for (const other of playerIds) {
         if (other === id) continue;
@@ -75,7 +86,7 @@
       }
       return {
         playerId: id, name: game.players[id].name, yearsVoted: yrs.length,
-        chartMatch, groupSync, top3Hits,
+        chartMatch, groupSync, top3Hits, predictCorrect, predictTotal: predYears.length,
         avgFirstPickRank: yrs.length ? firstRankSum / yrs.length : null, // lower = more mainstream
         twin,
       };
@@ -84,8 +95,11 @@
     const allSongs = voted.flatMap(y => y.rows.filter(r => r.points > 0).map(r => ({ ...r, year: y.year })))
       .sort((a, b) => b.points - a.points || b.medals[0] - a.medals[0] || a.rank - b.rank);
 
+    const leaderboard = players.slice().sort((a, b) => b.predictCorrect - a.predictCorrect || a.predictTotal - b.predictTotal || a.name.localeCompare(b.name));
+    leaderboard.forEach((p, i) => { p.place = i > 0 && leaderboard[i - 1].predictCorrect === p.predictCorrect ? leaderboard[i - 1].place : i + 1; });
+
     return {
-      years, voted, players,
+      years, voted, players, leaderboard,
       matches: voted.filter(y => y.matchesBillboard).length,
       top3: voted.filter(y => y.billboardNo1InTop3).length,
       hallOfFame: allSongs.slice(0, 15),
@@ -94,5 +108,5 @@
     };
   }
 
-  return { POINTS, yearResults, similarity, summary };
+  return { POINTS, ICONS, yearResults, similarity, summary };
 });
