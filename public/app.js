@@ -494,8 +494,10 @@ function PickView(ctx) {
     const trayItem = t => {
       const rank = t === 'p' ? st.predict : st.picks[t];
       const s = rank && songOf(year, rank);
-      return `<div class="tray-item ${s ? 'placed' : ''} ${t === 'p' ? 'predict' : 'p' + (Number(t) + 1)}">
-        ${tokenEl(t)}
+      // The whole card is the drag handle, not just the emoji.
+      return `<div class="tray-item ${s ? 'placed' : ''} ${t === 'p' ? 'predict' : 'p' + (Number(t) + 1)} ${st.locked ? 'locked' : ''} ${st.armed === String(t) ? 'armed' : ''}"
+        data-token="${t}" role="button" tabindex="0" aria-label="${TOKENS[t].label}${s ? ', on ' + esc(s.title) : ''}. Drag onto a song.">
+        <span class="token">${TOKENS[t].emoji}</span>
         <div class="tray-text"><b>${s ? esc(s.title) : TOKENS[t].label}</b><span>${s ? (t === 'p' ? 'your #1 guess' : TOKENS[t].label + ' · ' + TOKENS[t].sub) : TOKENS[t].sub}</span></div>
       </div>`;
     };

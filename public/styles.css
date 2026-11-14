@@ -397,3 +397,17 @@ body.dragging, body.dragging * { cursor: grabbing !important; user-select: none;
 .pickers { display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 6px 9px; max-width: none; padding: 4px 0 5px; }
 .pts-mini { font-weight: 800; font-size: .95rem; text-align: right; min-width: 30px; }
 .pts-mini span { display: block; font-size: .6rem; color: var(--muted); font-weight: 600; }
+/* The whole tray card is the drag handle, with a bigger emoji. */
+.tray-item[data-token] { cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; transition: transform .12s, box-shadow .12s, background .12s; }
+.tray-item[data-token]:hover { background: var(--card2); transform: translateY(-2px); }
+.tray-item[data-token]:active { transform: scale(.97); }
+.tray-item.armed { box-shadow: 0 0 0 3px var(--accent); background: var(--card2); }
+.tray-item.armed .token { animation: pulse 1s infinite; }
+.tray-item.locked { cursor: default; transform: none !important; }
+.tray-item .token { width: 54px; height: 54px; font-size: 2.1rem; pointer-events: none; }
+.tray-item.placed .token { opacity: .5; }
+.drag-ghost { font-size: 3.2rem; }
+@media (max-width: 560px) {
+  .tray-item { padding: 8px 4px; }
+  .tray-item .token { width: 46px; height: 46px; font-size: 1.85rem; }
+}
